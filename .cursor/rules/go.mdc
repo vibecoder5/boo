@@ -1,0 +1,20 @@
+---
+description: Соглашения Go в boo
+globs: "**/*.go"
+alwaysApply: false
+---
+
+# Go
+
+- Модуль `boo`, пакеты в `internal/`. Тесты — `*_test.go` рядом.
+- Книга везде `*epub.Book`. Новый формат: функция в `open` + пакет-конвертер, не отдельный тип в server/store.
+- Ключ: `id:` + identifier или `file:` + хеш. Не менять схему без миграции библиотеки.
+- `store`: мьютекс на мутациях, атомарная запись `state.json` (tmp + rename). Новые поля — `migrate*` и совместимость со старым JSON.
+- HTTP: методы в `Handler()`, JSON без HTML-escape, тексты ошибок для человека на русском.
+- `withLocalhost` не ослаблять. Не логировать содержимое книг.
+- Desktop: `desktop_windows.go` / `desktop_other.go`, тег `windows`.
+
+```go
+// плохо: слушать 0.0.0.0 или тащить прогресс в глобальный синглтон
+// хорошо: Listen 127.0.0.1, прогресс в store текущего Workspace
+```

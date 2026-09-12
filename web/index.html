@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>boo</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar" id="sidebar" hidden>
+      <div class="sidebar-head">
+        <p class="eyebrow">Меню</p>
+        <button class="icon-btn" id="closeToc" type="button" aria-label="Скрыть меню">×</button>
+      </div>
+      <div class="sidebar-home" id="sidebarHome">
+        <section class="sidebar-panel transfer-box" id="transferBox">
+          <div class="bookmarks-head">
+            <p class="eyebrow">Перенос</p>
+            <div class="workspaces-actions">
+              <button class="text-btn" id="exportBtn" type="button">Экспорт</button>
+              <button class="text-btn" id="importBtn" type="button">Импорт</button>
+            </div>
+          </div>
+          <p class="transfer-hint">Архив включает книги, обложки, словари, прогресс, закладки, заметки, списки и настройки. Импорт заменит текущую библиотеку.</p>
+          <input id="importInput" type="file" accept=".zip,application/zip" hidden>
+        </section>
+        <section class="sidebar-panel" id="fontsBox">
+          <p class="eyebrow">Оформление</p>
+          <div class="font-prefs">
+            <div class="font-pref">
+              <p class="eyebrow">Книги</p>
+              <div class="pref-row">
+                <select id="bookFont" aria-label="Шрифт книг"></select>
+              </div>
+              <div class="pref-row">
+                <button class="text-btn" id="bookFontDown" type="button" aria-label="Меньше шрифт книг">A−</button>
+                <input id="bookFontRange" type="range" min="14" max="36" step="1" aria-label="Размер шрифта книг">
+                <button class="text-btn" id="bookFontUp" type="button" aria-label="Больше шрифт книг">A+</button>
+                <span class="pref-value" id="bookFontValue"></span>
+              </div>
+              <p class="font-preview">Съешь ещё этих мягких французских булок — да выпей чаю.</p>
+            </div>
+            <div class="font-pref">
+              <p class="eyebrow">Интерфейс</p>
+              <div class="pref-row">
+                <select id="uiFont" aria-label="Шрифт интерфейса"></select>
+              </div>
+              <div class="pref-row">
+                <button class="text-btn" id="uiFontDown" type="button" aria-label="Меньше шрифт интерфейса">A−</button>
+                <input id="uiFontRange" type="range" min="12" max="24" step="1" aria-label="Размер шрифта интерфейса">
+                <button class="text-btn" id="uiFontUp" type="button" aria-label="Больше шрифт интерфейса">A+</button>
+                <span class="pref-value" id="uiFontValue"></span>
+              </div>
+              <p class="font-preview ui">Полка, меню, кнопки и подписи.</p>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div class="sidebar-book" id="sidebarBook">
+      <div class="book-meta" id="bookMeta"></div>
+      <div class="book-note" id="bookNoteBox" hidden>
+        <div class="bookmarks-head">
+          <p class="eyebrow">О книге</p>
+          <button class="text-btn" id="bookNoteExpand" type="button">Шире</button>
+        </div>
+        <label class="book-note-field book-note-journal">
+          <span class="book-note-label">Большая заметка</span>
+          <textarea id="bookJournal" rows="10" placeholder="Свободные мысли, впечатления, конспект — всё, что относится к книге целиком."></textarea>
+        </label>
+        <p class="book-note-hint" id="bookNoteHint">Сохраняется само</p>
+      </div>
+      <div class="read-progress" id="sidebarProgress" hidden>
+        <p class="eyebrow">Прогресс</p>
+        <div class="read-progress-track" id="sidebarProgressTrack"><i id="sidebarProgressFill"></i></div>
+        <p class="read-progress-text" id="sidebarProgressText"></p>
+      </div>
+      <label class="search">
+        <span class="eyebrow">Поиск</span>
+        <input id="searchInput" type="search" placeholder="Найти в книге…" autocomplete="off">
+      </label>
+      <div class="search-results" id="searchResults" hidden></div>
+      <div class="pref">
+        <p class="eyebrow">Ширина страницы</p>
+        <div class="pref-row">
+          <button class="text-btn" id="widthDownMenu" type="button" aria-label="Уже">Уже</button>
+          <input id="widthRange" type="range" min="22" max="80" step="1" aria-label="Ширина страницы">
+          <button class="text-btn" id="widthUpMenu" type="button" aria-label="Шире">Шире</button>
+        </div>
+      </div>
+      <div class="pref">
+        <p class="eyebrow">Шрифт книги</p>
+        <div class="pref-row">
+          <select id="bookFontMenu" aria-label="Шрифт книги"></select>
+        </div>
+        <div class="pref-row">
+          <button class="text-btn" id="bookFontDownMenu" type="button" aria-label="Меньше шрифт книги">A−</button>
+          <input id="bookFontRangeMenu" type="range" min="14" max="36" step="1" aria-label="Размер шрифта книги">
+          <button class="text-btn" id="bookFontUpMenu" type="button" aria-label="Больше шрифт книги">A+</button>
+          <span class="pref-value" id="bookFontValueMenu"></span>
+        </div>
+      </div>
+      <div class="pref">
+        <p class="eyebrow">Шрифт интерфейса</p>
+        <div class="pref-row">
+          <select id="uiFontMenu" aria-label="Шрифт интерфейса"></select>
+        </div>
+        <div class="pref-row">
+          <button class="text-btn" id="uiFontDownMenu" type="button" aria-label="Меньше шрифт интерфейса">A−</button>
+          <input id="uiFontRangeMenu" type="range" min="12" max="24" step="1" aria-label="Размер шрифта интерфейса">
+          <button class="text-btn" id="uiFontUpMenu" type="button" aria-label="Больше шрифт интерфейса">A+</button>
+          <span class="pref-value" id="uiFontValueMenu"></span>
+        </div>
+      </div>
+      <div class="bookmarks" id="bookmarksBox" hidden>
+        <div class="bookmarks-head">
+          <p class="eyebrow">Закладки</p>
+          <button class="text-btn" id="bookmarkAdd" type="button">Добавить</button>
+        </div>
+        <div class="bookmark-list" id="bookmarkList"></div>
+      </div>
+      <div class="bookmarks" id="dictBox" hidden>
+        <div class="bookmarks-head">
+          <p class="eyebrow">Словарь</p>
+          <button class="text-btn" id="dictAdd" type="button">Подключить</button>
+        </div>
+        <p class="bookmark-empty" id="dictHint">Подключите англо-русский, русско-английский или любой другой словарь. Наведите на слово — если перевод есть, он появится во всплывающем окне.</p>
+        <div class="dict-list" id="dictList"></div>
+        <input id="dictInput" type="file" accept=".dsl,.txt,.tsv,.dic,.json,.xdxf,.xml,text/plain,application/json" hidden>
+      </div>
+      <div class="toc-box" id="tocBox">
+        <button class="toc-fold" id="tocFold" type="button" aria-expanded="true" aria-controls="toc">
+          <span class="toc-chevron" aria-hidden="true"></span>
+          <span class="eyebrow">Оглавление</span>
+        </button>
+        <button class="text-btn toc-hide-read" id="tocHideRead" type="button" aria-pressed="false" title="Скрывать прочитанные главы">Скрыть прочитанные</button>
+        <nav class="toc" id="toc"></nav>
+      </div>
+      </div>
+      <div class="sidebar-resizer" id="sidebarResizer" role="separator" aria-orientation="vertical" aria-label="Ширина меню"></div>
+    </aside>
+    <button class="sidebar-peek" id="sidebarPeek" type="button" hidden aria-label="Показать меню"></button>
+
+    <div class="main">
+      <header class="topbar">
+        <button class="text-btn" id="shelfBtn" type="button">Полка</button>
+        <button class="text-btn" id="tocBtn" type="button">Меню</button>
+        <button class="text-btn" id="workspacesBtn" type="button">Пространства</button>
+        <button class="text-btn" id="listsBtn" type="button">Списки</button>
+        <div class="topbar-title" id="topTitle">boo</div>
+        <div class="topbar-actions">
+          <button class="text-btn" id="fontDown" type="button" aria-label="Меньше шрифт книги">A−</button>
+          <button class="text-btn" id="fontUp" type="button" aria-label="Больше шрифт книги">A+</button>
+          <button class="text-btn" id="widthDown" type="button" aria-label="Уже страница">▯−</button>
+          <button class="text-btn" id="widthUp" type="button" aria-label="Шире страница">▯+</button>
+          <button class="text-btn" id="themeBtn" type="button">Тема</button>
+          <button class="text-btn" id="notesBtn" type="button" hidden>Заметки</button>
+          <button class="text-btn" id="historyBtn" type="button" hidden>История</button>
+          <button class="text-btn" id="bookmarkBtn" type="button">Закладка</button>
+          <button class="text-btn" id="guideBtn" type="button">Руководство</button>
+          <label class="text-btn file-btn">
+            Открыть
+            <input id="fileInput" type="file" accept=".epub,.fb2,.zip,.txt,.md,application/epub+zip" hidden>
+          </label>
+        </div>
+      </header>
+
+      <section class="shelf" id="shelf">
+        <div class="shelf-head">
+          <p class="eyebrow" id="shelfLabel">Полка</p>
+          <button class="icon-btn shelf-add" id="shelfAddBtn" type="button" aria-label="Добавить книгу" title="Добавить книгу">+</button>
+        </div>
+        <div class="shelf-grid" id="shelfGrid"></div>
+      </section>
+
+      <section class="welcome" id="welcome">
+        <div class="welcome-split">
+          <section class="workspaces todo-box" id="todoBox" hidden>
+            <div class="workspaces-head">
+              <div>
+                <p class="eyebrow" id="todoEyebrow">Список дел · последняя книга</p>
+                <h2 class="workspaces-title" id="todoTitle">Последняя книга</h2>
+              </div>
+            </div>
+            <div class="todo-list" id="welcomeTodoList"></div>
+            <form class="todo-form" id="welcomeTodoForm">
+              <input id="welcomeTodoText" type="text" maxlength="400" placeholder="Что сделать…" autocomplete="off">
+              <div class="todo-when">
+                <input id="welcomeTodoDate" type="date" aria-label="Дата исполнения" required>
+                <input id="welcomeTodoTime" type="time" aria-label="Время исполнения" required>
+              </div>
+              <button class="primary-btn" type="submit">Добавить</button>
+            </form>
+          </section>
+          <div class="welcome-journal">
+            <section class="workspaces history-box" id="welcomeHistory">
+              <div class="workspaces-head">
+                <div>
+                  <p class="eyebrow">История</p>
+                  <h2 class="workspaces-title">Последние операции</h2>
+                </div>
+              </div>
+              <div class="history-list" id="welcomeHistoryList"></div>
+              <form class="history-form" id="welcomeHistoryForm" hidden>
+                <input id="welcomeHistoryText" type="text" maxlength="400" placeholder="Своя отметка к книге…" autocomplete="off">
+                <button class="primary-btn" type="submit">Добавить</button>
+              </form>
+            </section>
+            <section class="workspaces history-box" id="welcomeUndo">
+              <div class="workspaces-head">
+                <div>
+                  <p class="eyebrow">Отмена</p>
+                  <h2 class="workspaces-title">Удалённое</h2>
+                </div>
+                <button class="text-btn" id="undoLastBtn" type="button">Отменить последнее</button>
+              </div>
+              <div class="history-list" id="welcomeUndoList"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <article class="reader" id="reader" hidden>
+        <div class="page" id="page">
+          <p class="read-mark" id="pageReadMark" hidden>Прочитано</p>
+          <div class="chapter-head" id="chapterHead">
+            <h1 class="chapter-title" id="chapterTitle"></h1>
+            <button type="button" class="read-mark chapter-read" id="pageChapterRead" hidden aria-pressed="false">Отметить главу</button>
+          </div>
+          <div class="content" id="content"></div>
+        </div>
+        <nav class="pager">
+          <button class="text-btn" id="prevBtn" type="button">← Предыдущая</button>
+          <span id="pageInfo"></span>
+          <button class="text-btn" id="nextBtn" type="button">Следующая →</button>
+        </nav>
+      </article>
+    </div>
+
+    <aside class="listsbar" id="listsbar">
+      <div class="lists-resizer" id="listsResizer" role="separator" aria-orientation="vertical" aria-label="Ширина списков"></div>
+      <div class="sidebar-head">
+        <p class="eyebrow">Списки для чтения</p>
+        <button class="icon-btn" id="closeLists" type="button" aria-label="Свернуть списки">×</button>
+      </div>
+      <div class="lists-body" id="listsBody">
+        <div class="workspaces-head">
+          <h2 class="workspaces-title" id="listsTitle">Все книги</h2>
+          <div class="workspaces-actions">
+            <button class="text-btn" id="listCreateBtn" type="button">Создать</button>
+          </div>
+        </div>
+        <form class="workspace-form" id="listForm" hidden>
+          <input id="listName" type="text" maxlength="80" placeholder="Название, например «На отпуск»" autocomplete="off">
+          <button class="primary-btn" type="submit">Создать</button>
+          <button class="ghost-btn" id="listFormCancel" type="button">Отмена</button>
+        </form>
+        <div class="workspace-grid" id="listGrid"></div>
+      </div>
+      <button class="lists-rail" id="listsRail" type="button" aria-label="Развернуть списки">Списки</button>
+    </aside>
+    <aside class="workspacesbar" id="workspacesbar">
+      <div class="workspaces-resizer" id="workspacesResizer" role="separator" aria-orientation="vertical" aria-label="Ширина пространств"></div>
+      <div class="sidebar-head">
+        <p class="eyebrow">Рабочие пространства</p>
+        <button class="icon-btn" id="closeWorkspaces" type="button" aria-label="Свернуть пространства">×</button>
+      </div>
+      <div class="workspaces-body" id="workspacesBody">
+        <div class="workspaces-head">
+          <h2 class="workspaces-title" id="workspaceTitle">Библиотека</h2>
+          <div class="workspaces-actions">
+            <button class="text-btn" id="workspaceRenameBtn" type="button">Переименовать</button>
+            <button class="text-btn" id="workspaceCreateBtn" type="button">Создать</button>
+          </div>
+        </div>
+        <form class="workspace-form" id="workspaceForm" hidden>
+          <input id="workspaceName" type="text" maxlength="80" placeholder="Название, например «Учёба»" autocomplete="off">
+          <button class="primary-btn" id="workspaceFormSubmit" type="submit">Создать</button>
+          <button class="ghost-btn" id="workspaceFormCancel" type="button">Отмена</button>
+        </form>
+        <div class="workspace-grid" id="workspaceGrid"></div>
+      </div>
+      <button class="workspaces-rail" id="workspacesRail" type="button" aria-label="Развернуть пространства">Пространства</button>
+    </aside>
+    <aside class="notesbar collapsed" id="notesbar" hidden>
+      <div class="notes-resizer" id="notesResizer" role="separator" aria-orientation="vertical" aria-label="Ширина заметок"></div>
+      <div class="sidebar-head">
+        <p class="eyebrow">Заметки</p>
+        <div class="notes-head-actions">
+          <button class="text-btn" id="noteAdd" type="button">Добавить</button>
+          <button class="icon-btn" id="closeNotes" type="button" aria-label="Свернуть заметки">×</button>
+        </div>
+      </div>
+      <div class="notes-body" id="notesBody">
+        <div class="note-list" id="noteList"></div>
+      </div>
+      <button class="notes-rail" id="notesRail" type="button" aria-label="Развернуть заметки">Заметки</button>
+    </aside>
+    <aside class="historybar collapsed" id="historybar" hidden>
+      <div class="history-resizer" id="historyResizer" role="separator" aria-orientation="vertical" aria-label="Ширина истории"></div>
+      <div class="sidebar-head">
+        <p class="eyebrow">История</p>
+        <button class="icon-btn" id="closeHistory" type="button" aria-label="Свернуть историю">×</button>
+      </div>
+      <div class="history-body" id="historyBody">
+        <div class="history-list" id="readerHistoryList"></div>
+        <form class="history-form" id="readerHistoryForm">
+          <input id="readerHistoryText" type="text" maxlength="400" placeholder="Своя отметка…" autocomplete="off">
+          <button class="primary-btn" type="submit">Отметить</button>
+        </form>
+        <div class="undo-box" id="readerUndoBox">
+          <div class="bookmarks-head">
+            <p class="eyebrow">Отмена</p>
+            <button class="text-btn" id="readerUndoLastBtn" type="button">Последнее</button>
+          </div>
+          <div class="history-list" id="readerUndoList"></div>
+        </div>
+      </div>
+      <button class="history-rail" id="historyRail" type="button" aria-label="Развернуть историю">История</button>
+    </aside>
+  </div>
+  <div class="ctx" id="ctxMenu" hidden>
+    <div id="ctxBookBox">
+      <p class="ctx-label">Книга</p>
+      <div class="ctx-list">
+        <button type="button" class="ctx-item" id="ctxFinished">Отметить прочитанной</button>
+        <button type="button" class="ctx-item" id="ctxBookNote">Описание и заметка</button>
+        <button type="button" class="ctx-item" id="ctxTodo">Список дел</button>
+      </div>
+      <p class="ctx-label">Глава</p>
+      <div class="ctx-list">
+        <button type="button" class="ctx-item" id="ctxChapterRead">Отметить главу прочитанной</button>
+      </div>
+    </div>
+    <div id="ctxHighlightBox">
+      <p class="ctx-label">Выделение</p>
+      <div class="ctx-colors" id="ctxColors">
+        <button type="button" class="ctx-swatch yellow" data-color="yellow" title="Жёлтый" aria-label="Жёлтый"></button>
+        <button type="button" class="ctx-swatch green" data-color="green" title="Зелёный" aria-label="Зелёный"></button>
+        <button type="button" class="ctx-swatch blue" data-color="blue" title="Синий" aria-label="Синий"></button>
+        <button type="button" class="ctx-swatch pink" data-color="pink" title="Розовый" aria-label="Розовый"></button>
+        <button type="button" class="ctx-swatch orange" data-color="orange" title="Оранжевый" aria-label="Оранжевый"></button>
+      </div>
+      <button type="button" class="ctx-remove" id="ctxRemove" hidden>Убрать выделение</button>
+    </div>
+    <div id="ctxNoteBox">
+      <p class="ctx-label">Заметка</p>
+      <div class="ctx-colors" id="ctxNoteColors">
+        <button type="button" class="ctx-swatch yellow" data-color="yellow" title="Жёлтый" aria-label="Жёлтый"></button>
+        <button type="button" class="ctx-swatch green" data-color="green" title="Зелёный" aria-label="Зелёный"></button>
+        <button type="button" class="ctx-swatch blue" data-color="blue" title="Синий" aria-label="Синий"></button>
+        <button type="button" class="ctx-swatch pink" data-color="pink" title="Розовый" aria-label="Розовый"></button>
+        <button type="button" class="ctx-swatch orange" data-color="orange" title="Оранжевый" aria-label="Оранжевый"></button>
+      </div>
+      <button type="button" class="ctx-remove" id="ctxNoteRemove" hidden>Убрать заметку</button>
+    </div>
+    <div id="ctxDictBox">
+      <p class="ctx-label">Словарь</p>
+      <div class="ctx-list">
+        <button type="button" class="ctx-item" id="ctxTranslate" hidden>Перевести</button>
+        <button type="button" class="ctx-item" id="ctxDictToggle">Выключить словарь</button>
+      </div>
+    </div>
+  </div>
+  <div class="ctx" id="welcomeCtx" hidden>
+    <p class="ctx-label">Книга</p>
+    <div class="ctx-list">
+      <button type="button" class="ctx-item" id="welcomeCtxAdd">Добавить книгу…</button>
+      <button type="button" class="ctx-item" id="welcomeCtxDemo">Демо-книга</button>
+      <button type="button" class="ctx-item" id="welcomeCtxGuide">Руководство</button>
+    </div>
+  </div>
+  <div class="ctx" id="shelfCtx" hidden>
+    <p class="ctx-label">Книга</p>
+    <div class="ctx-list">
+      <button type="button" class="ctx-item" id="shelfCtxFinished">Отметить прочитанной</button>
+      <button type="button" class="ctx-item" id="shelfCtxNote">Описание и заметка</button>
+      <button type="button" class="ctx-item" id="shelfCtxTodo">Список дел</button>
+    </div>
+    <p class="ctx-label">В список для чтения</p>
+    <div class="ctx-list" id="shelfCtxLists"></div>
+    <form class="ctx-form" id="shelfCtxForm">
+      <input id="shelfCtxName" type="text" maxlength="80" placeholder="Новый список…" autocomplete="off">
+    </form>
+    <p class="ctx-label">В другое пространство</p>
+    <div class="ctx-list" id="shelfCtxWorkspaces"></div>
+    <form class="ctx-form" id="shelfCtxWorkspaceForm">
+      <input id="shelfCtxWorkspaceName" type="text" maxlength="80" placeholder="Новое пространство…" autocomplete="off">
+    </form>
+  </div>
+  <div class="dlg" id="addBookDlg" hidden>
+    <div class="dlg-backdrop" id="addBookBackdrop"></div>
+    <div class="dlg-card add-book-dlg" role="dialog" aria-modal="true" aria-labelledby="addBookTitle">
+      <div class="dlg-head">
+        <div>
+          <p class="eyebrow">Полка</p>
+          <h2 id="addBookTitle">Добавить книгу</h2>
+        </div>
+        <button class="icon-btn" id="addBookClose" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <p class="add-book-hint">EPUB, FB2, ZIP, TXT или Markdown. Файл копируется в локальную библиотеку.</p>
+      <div class="add-book-actions">
+        <button class="primary-btn" id="addBookFile" type="button">Выбрать файл</button>
+        <button class="ghost-btn" id="addBookDemo" type="button">Демо-книга</button>
+        <button class="ghost-btn" id="addBookGuide" type="button">Руководство</button>
+      </div>
+    </div>
+  </div>
+  <div class="dlg" id="bookNoteDlg" hidden>
+    <div class="dlg-backdrop" id="bookNoteBackdrop"></div>
+    <div class="dlg-card" role="dialog" aria-modal="true" aria-labelledby="bookNoteTitle">
+      <div class="dlg-head">
+        <div>
+          <p class="eyebrow">О книге</p>
+          <h2 id="bookNoteTitle"></h2>
+        </div>
+        <button class="icon-btn" id="bookNoteClose" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <label class="book-note-field">
+        <span class="book-note-label">Описание</span>
+        <textarea id="dlgDescription" rows="4" maxlength="2000" placeholder="Коротко о книге: о чём она для вас, зачем читаете…"></textarea>
+      </label>
+      <label class="book-note-field book-note-journal">
+        <span class="book-note-label">Большая заметка</span>
+        <textarea id="dlgJournal" rows="16" placeholder="Свободные мысли, впечатления, конспект — всё, что относится к книге целиком."></textarea>
+      </label>
+      <p class="book-note-hint" id="dlgNoteHint">Сохраняется само</p>
+    </div>
+  </div>
+  <div class="dlg" id="todoDlg" hidden>
+    <div class="dlg-backdrop" id="todoBackdrop"></div>
+    <div class="dlg-card todo-dlg" role="dialog" aria-modal="true" aria-labelledby="todoDlgTitle">
+      <div class="dlg-head">
+        <div>
+          <p class="eyebrow">Список дел</p>
+          <h2 id="todoDlgTitle"></h2>
+        </div>
+        <button class="icon-btn" id="todoDlgClose" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <div class="todo-list" id="dlgTodoList"></div>
+      <form class="todo-form" id="dlgTodoForm">
+        <input id="dlgTodoText" type="text" maxlength="400" placeholder="Что сделать…" autocomplete="off">
+        <div class="todo-when">
+          <input id="dlgTodoDate" type="date" aria-label="Дата исполнения" required>
+          <input id="dlgTodoTime" type="time" aria-label="Время исполнения" required>
+        </div>
+        <button class="primary-btn" type="submit">Добавить</button>
+      </form>
+    </div>
+  </div>
+  <div class="note-tip" id="noteTip" hidden role="tooltip"></div>
+  <div class="dict-tip" id="dictTip" hidden role="tooltip">
+    <p class="dict-tip-word" id="dictTipWord"></p>
+    <p class="dict-tip-text" id="dictTipText"></p>
+    <p class="dict-tip-meta" id="dictTipMeta"></p>
+  </div>
+  <div class="progress" id="progressBar" hidden>
+    <button class="progress-track" id="progressTrack" type="button" aria-label="Прогресс чтения">
+      <i id="progressFill"></i>
+    </button>
+    <p class="progress-meta" id="progressMeta">0%</p>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

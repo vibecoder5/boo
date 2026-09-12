@@ -1,0 +1,17 @@
+---
+description: Соглашения фронтенда boo
+globs: web/**
+alwaysApply: false
+---
+
+# web/
+
+Ванильные `index.html`, `app.js`, `styles.css`. Без React/сборщика. Строки UI — русские.
+
+- Источник истины: `GET /api/state`. После мутации применяйте ответ сервера, не выдумывайте локальный кэш вразрез со state.
+- Темы: `dark`, `sepia`, `light`. Шрифты — id из `allowedFonts` в store (`serif`, `georgia`, …).
+- Клавиши уже заняты: стрелки, `[]` `{}`, `t`, `b`, `n`, `h`, `w`, `l`, `d`, `\`, `/`, Esc, Ctrl+Z. Не перехватывайте ввод в `input`/`textarea`.
+- Выделения и заметки: диапазон `start`/`end` в главе, цвета `yellow|green|blue|pink|orange`.
+- Не ходите на чужие origin. Картинки книги — только `/res?p=`.
+
+Новый контрол: разметка в `index.html`, поведение в `app.js`, стили в `styles.css`, при необходимости поле в `store.UI` с `normalizeUI`.

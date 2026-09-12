@@ -1,0 +1,6 @@
+/boo
+/boo.exe
+*.exe
+*.test
+.DS_Store
+dist/
