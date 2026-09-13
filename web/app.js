@@ -37,6 +37,9 @@ const state = {
   saving: false,
   query: "",
   hits: [],
+  shelfQuery: "",
+  shelfHits: [],
+  shelfHitIndex: -1,
   bookmarks: [],
   highlights: [],
   notes: [],
@@ -2175,6 +2178,126 @@ function renderShelfCard(item, listId) {
   return card;
 }
 
+function shelfSearchPlace(hit) {
+  const lines = [];
+  const wsName = hit.workspace && hit.workspace.name;
+  if (wsName) lines.push(`Пространство · ${wsName}`);
+  const lists = (hit.lists || []).map((item) => item.name).filter(Boolean);
+  if (lists.length) lines.push(`Список · ${lists.join(", ")}`);
+  return lines;
+}
+
+function clearShelfSearch() {
+  state.shelfQuery = "";
+  state.shelfHits = [];
+  state.shelfHitIndex = -1;
+  const input = $("shelfSearchInput");
+  if (input) input.value = "";
+  renderShelfSearchResults([]);
+}
+
+function renderShelfSearchResults(hits) {
+  const box = $("shelfSearchResults");
+  if (!box) return;
+  box.replaceChildren();
+  if (!state.shelfQuery) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  if (!hits.length) {
+    const empty = document.createElement("p");
+    empty.className = "shelf-search-empty";
+    empty.textContent = "Нет книг с таким названием";
+    box.appendChild(empty);
+    return;
+  }
+  hits.forEach((hit, i) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "shelf-search-hit";
+    if (i === state.shelfHitIndex) btn.classList.add("active");
+    if (hit.coverUrl) {
+      const img = document.createElement("img");
+      img.src = hit.coverUrl;
+      img.alt = "";
+      btn.appendChild(img);
+    } else {
+      const ph = document.createElement("div");
+      ph.className = "shelf-search-cover";
+      ph.textContent = ((hit.title || "?").trim().charAt(0) || "?").toUpperCase();
+      btn.appendChild(ph);
+    }
+    const body = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = hit.title || "Без названия";
+    body.appendChild(title);
+    if (hit.author) {
+      const author = document.createElement("span");
+      author.className = "meta";
+      author.textContent = hit.author;
+      body.appendChild(author);
+    }
+    for (const line of shelfSearchPlace(hit)) {
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      meta.textContent = line;
+      body.appendChild(meta);
+    }
+    btn.appendChild(body);
+    btn.addEventListener("click", () => openLibraryHit(hit));
+    box.appendChild(btn);
+  });
+}
+
+let shelfSearchTimer = 0;
+
+async function runShelfSearch(q) {
+  state.shelfQuery = q.trim();
+  state.shelfHitIndex = -1;
+  if (!state.shelfQuery) {
+    state.shelfHits = [];
+    renderShelfSearchResults([]);
+    return;
+  }
+  try {
+    const data = await api(`/api/library/search?q=${encodeURIComponent(state.shelfQuery)}`);
+    if (data.query !== state.shelfQuery) return;
+    state.shelfHits = data.hits || [];
+    state.shelfHitIndex = state.shelfHits.length ? 0 : -1;
+    renderShelfSearchResults(state.shelfHits);
+  } catch (err) {
+    state.shelfHits = [];
+    renderShelfSearchResults([]);
+    console.warn(err);
+  }
+}
+
+async function openLibraryHit(hit) {
+  if (!hit || !hit.key) return;
+  try {
+    const wsId = hit.workspace && hit.workspace.id;
+    if (wsId && state.workspace && wsId !== state.workspace.id) {
+      await flushBookMeta();
+      if (state.book) await saveProgress();
+      const payload = await api("/api/workspaces/current", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: wsId }),
+      });
+      await applyState(payload, false);
+    }
+    if (!hit.canOpen) {
+      alert("Файл книги недоступен");
+      return;
+    }
+    await openFromShelf(hit.key);
+    clearShelfSearch();
+  } catch (err) {
+    alert(err.message || "Не удалось открыть книгу");
+  }
+}
+
 function renderLibrary() {
   const shelf = $("shelf");
   const grid = $("shelfGrid");
@@ -3521,6 +3644,32 @@ $("searchInput").addEventListener("keydown", (e) => {
     openChapter(hit.chapterIndex, "", true, state.query, hit.offset);
   }
 });
+$("shelfSearchInput").addEventListener("input", (e) => {
+  clearTimeout(shelfSearchTimer);
+  shelfSearchTimer = setTimeout(() => runShelfSearch(e.target.value), 220);
+});
+$("shelfSearchInput").addEventListener("focus", () => {
+  if (state.shelfQuery) renderShelfSearchResults(state.shelfHits);
+});
+$("shelfSearchInput").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" && state.shelfHits.length) {
+    e.preventDefault();
+    state.shelfHitIndex = Math.min(state.shelfHits.length - 1, Math.max(0, state.shelfHitIndex) + 1);
+    renderShelfSearchResults(state.shelfHits);
+    return;
+  }
+  if (e.key === "ArrowUp" && state.shelfHits.length) {
+    e.preventDefault();
+    state.shelfHitIndex = Math.max(0, (state.shelfHitIndex < 0 ? 0 : state.shelfHitIndex) - 1);
+    renderShelfSearchResults(state.shelfHits);
+    return;
+  }
+  if (e.key === "Enter" && state.shelfHits.length) {
+    e.preventDefault();
+    const hit = state.shelfHits[Math.max(0, state.shelfHitIndex)] || state.shelfHits[0];
+    openLibraryHit(hit);
+  }
+});
 $("shelfBtn").addEventListener("click", goShelf);
 $("tocFold").addEventListener("click", toggleTocSection);
 $("tocHideRead").addEventListener("click", toggleHideReadChapters);
@@ -3833,6 +3982,10 @@ document.addEventListener("pointerdown", (e) => {
   if (!menu.hidden && !menu.contains(e.target)) hideCtx();
   if (shelfMenu && !shelfMenu.hidden && !shelfMenu.contains(e.target)) hideShelfCtx();
   if (welcomeMenu && !welcomeMenu.hidden && !welcomeMenu.contains(e.target)) hideWelcomeCtx();
+  const shelfSearch = $("shelfSearch");
+  if (shelfSearch && !shelfSearch.contains(e.target) && $("shelfSearchResults") && !$("shelfSearchResults").hidden) {
+    $("shelfSearchResults").hidden = true;
+  }
   if (e.button !== 2 && !$("content").contains(e.target) && !menu.contains(e.target)) {
     savedSel = null;
   }
@@ -3904,6 +4057,15 @@ window.addEventListener("keydown", (e) => {
     }
     if ($("workspaceForm") && !$("workspaceForm").hidden) {
       setWorkspaceFormOpen(false);
+      e.preventDefault();
+      return;
+    }
+    if (document.activeElement === $("shelfSearchInput") || ($("shelfSearchResults") && !$("shelfSearchResults").hidden)) {
+      if (state.shelfQuery) {
+        clearShelfSearch();
+      } else {
+        $("shelfSearchInput").blur();
+      }
       e.preventDefault();
       return;
     }
@@ -3997,11 +4159,16 @@ window.addEventListener("keydown", (e) => {
     toggleDictionary();
     return;
   }
-  if (e.key === "/" && state.book) {
+  if (e.key === "/") {
     e.preventDefault();
-    setSidebarOpen(true);
-    $("searchInput").focus();
-    $("searchInput").select();
+    if (state.book) {
+      setSidebarOpen(true);
+      $("searchInput").focus();
+      $("searchInput").select();
+    } else if ($("shelfSearchInput")) {
+      $("shelfSearchInput").focus();
+      $("shelfSearchInput").select();
+    }
     return;
   }
   if (e.key === "ArrowRight") openChapter(state.chapterIndex + 1, "", true);

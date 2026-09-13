@@ -97,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/dictionaries/lookup", s.handleDictionaryLookup)
 	mux.HandleFunc("DELETE /api/library", s.handleLibraryDelete)
 	mux.HandleFunc("GET /api/library/cover", s.handleLibraryCover)
+	mux.HandleFunc("GET /api/library/search", s.handleLibrarySearch)
 	mux.HandleFunc("GET /api/export", s.handleExport)
 	mux.HandleFunc("POST /api/import", s.handleImport)
 	mux.HandleFunc("GET /res", s.handleResource)
@@ -1193,9 +1194,37 @@ func (s *Server) dropAllDicts() {
 	s.dictMu.Unlock()
 }
 
+func (s *Server) handleLibrarySearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	hits := s.store.SearchLibrary(q)
+	out := make([]map[string]any, 0, len(hits))
+	for _, h := range hits {
+		e := h.Entry
+		cover := ""
+		if e.Cover != "" {
+			cover = "/api/library/cover?key=" + url.QueryEscape(e.Key)
+		}
+		out = append(out, map[string]any{
+			"key":      e.Key,
+			"title":    e.Title,
+			"author":   e.Author,
+			"format":   e.Format,
+			"coverUrl": cover,
+			"finished": e.Finished,
+			"canOpen":  bundledBook(e) || e.Path != "",
+			"workspace": map[string]any{
+				"id":   h.WorkspaceID,
+				"name": h.WorkspaceName,
+			},
+			"lists": h.Lists,
+		})
+	}
+	writeJSON(w, map[string]any{"query": q, "hits": out})
+}
+
 func (s *Server) handleLibraryCover(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
-	entry, ok := s.store.Entry(key)
+	entry, ok := s.store.EntryAnywhere(key)
 	if !ok || entry.Cover == "" {
 		http.NotFound(w, r)
 		return

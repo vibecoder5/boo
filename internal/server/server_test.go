@@ -1456,3 +1456,104 @@ func TestExportImportAPI(t *testing.T) {
 		t.Fatalf("bookmarks %#v", marks)
 	}
 }
+
+func TestLibrarySearchAPI(t *testing.T) {
+	st := testStore(t)
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
+	book, err := demoBook()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	srv := New(st, fs.FS(ui), book)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	res, err := http.Get(ts.URL + "/api/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var state map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ := state["workspace"].(map[string]any)
+	firstID, _ := ws["id"].(string)
+	firstName, _ := ws["name"].(string)
+	lib, _ := state["library"].([]any)
+	if len(lib) != 1 {
+		t.Fatalf("library %#v", lib)
+	}
+	item, _ := lib[0].(map[string]any)
+	key, _ := item["key"].(string)
+	title, _ := item["title"].(string)
+	if firstID == "" || key == "" || title == "" {
+		t.Fatalf("ids %#v item %#v", ws, item)
+	}
+
+	res, err = http.Post(ts.URL+"/api/lists", "application/json", strings.NewReader(`{"name":"На отпуск","key":"`+key+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("list: %d", res.StatusCode)
+	}
+
+	res, err = http.Post(ts.URL+"/api/workspaces", "application/json", strings.NewReader(`{"name":"Учёба"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("workspace: %d", res.StatusCode)
+	}
+
+	q := string([]rune(title)[:4])
+	res, err = http.Get(ts.URL + "/api/library/search?q=" + url.QueryEscape(q))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("search: %d", res.StatusCode)
+	}
+	var found map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&found); err != nil {
+		t.Fatal(err)
+	}
+	hits, _ := found["hits"].([]any)
+	if len(hits) != 1 {
+		t.Fatalf("hits %#v", found)
+	}
+	hit, _ := hits[0].(map[string]any)
+	if hit["key"] != key || hit["title"] != title {
+		t.Fatalf("book %#v", hit)
+	}
+	hitWS, _ := hit["workspace"].(map[string]any)
+	if hitWS["id"] != firstID || hitWS["name"] != firstName {
+		t.Fatalf("workspace %#v", hitWS)
+	}
+	lists, _ := hit["lists"].([]any)
+	if len(lists) != 1 {
+		t.Fatalf("lists %#v", hit["lists"])
+	}
+	list, _ := lists[0].(map[string]any)
+	if list["name"] != "На отпуск" {
+		t.Fatalf("list %#v", list)
+	}
+
+	res, err = http.Get(ts.URL + "/api/library/search?q=" + url.QueryEscape("неттакойкниги"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if err := json.NewDecoder(res.Body).Decode(&found); err != nil {
+		t.Fatal(err)
+	}
+	hits, _ = found["hits"].([]any)
+	if len(hits) != 0 {
+		t.Fatalf("empty %#v", found)
+	}
+}

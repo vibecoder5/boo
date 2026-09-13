@@ -148,6 +148,19 @@ type WorkspaceInfo struct {
 	Current   bool      `json:"current"`
 }
 
+type LibrarySearchList struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type LibraryHit struct {
+	Entry         Entry
+	WorkspaceID   string
+	WorkspaceName string
+	Current       bool
+	Lists         []LibrarySearchList
+}
+
 type Note struct {
 	ID           string    `json:"id"`
 	BookKey      string    `json:"bookKey"`
@@ -524,6 +537,64 @@ func (s *Store) RenameWorkspace(id, name string) (WorkspaceInfo, error) {
 		}, nil
 	}
 	return WorkspaceInfo{}, os.ErrNotExist
+}
+
+func (s *Store) SearchLibrary(q string) []LibraryHit {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return []LibraryHit{}
+	}
+	if runes := []rune(q); len(runes) > 80 {
+		q = string(runes[:80])
+	}
+	needle := strings.ToLower(q)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureWorkspace()
+	current := s.data.CurrentWorkspace
+	out := make([]LibraryHit, 0)
+	for _, ws := range s.data.Workspaces {
+		for _, e := range ws.Library {
+			if !strings.Contains(strings.ToLower(e.Title), needle) {
+				continue
+			}
+			lists := make([]LibrarySearchList, 0)
+			for _, list := range ws.Lists {
+				for _, key := range list.BookKeys {
+					if key != e.Key {
+						continue
+					}
+					lists = append(lists, LibrarySearchList{ID: list.ID, Name: list.Name})
+					break
+				}
+			}
+			out = append(out, LibraryHit{
+				Entry:         e,
+				WorkspaceID:   ws.ID,
+				WorkspaceName: ws.Name,
+				Current:       ws.ID == current,
+				Lists:         lists,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Current != out[j].Current {
+			return out[i].Current
+		}
+		ti := strings.ToLower(out[i].Entry.Title)
+		tj := strings.ToLower(out[j].Entry.Title)
+		if ti != tj {
+			return ti < tj
+		}
+		if out[i].WorkspaceName != out[j].WorkspaceName {
+			return strings.ToLower(out[i].WorkspaceName) < strings.ToLower(out[j].WorkspaceName)
+		}
+		return out[i].WorkspaceID < out[j].WorkspaceID
+	})
+	if len(out) > 40 {
+		out = out[:40]
+	}
+	return out
 }
 
 func (s *Store) Lists() []ReadingListInfo {
@@ -1305,6 +1376,21 @@ func (s *Store) Entry(key string) (Entry, bool) {
 	defer s.mu.Unlock()
 	for _, e := range s.ws().Library {
 		if e.Key == key {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
+
+func (s *Store) EntryAnywhere(key string) (Entry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureWorkspace()
+	if e, ok := libraryEntry(s.ws(), key); ok {
+		return e, true
+	}
+	for i := range s.data.Workspaces {
+		if e, ok := libraryEntry(&s.data.Workspaces[i], key); ok {
 			return e, true
 		}
 	}

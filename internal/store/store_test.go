@@ -1243,3 +1243,60 @@ func TestDictionaries(t *testing.T) {
 		t.Fatalf("file %v", err)
 	}
 }
+
+func TestSearchLibrary(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(Entry{Key: "id:home", Title: "Записки на полях", Author: "А"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateList("На отпуск", "id:home"); err != nil {
+		t.Fatal(err)
+	}
+	home := st.CurrentWorkspace()
+	if _, err := st.CreateWorkspace("Учёба"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(Entry{Key: "id:study", Title: "Учебник физики", Author: "Б"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if hits := st.SearchLibrary(""); len(hits) != 0 {
+		t.Fatalf("empty %#v", hits)
+	}
+	if hits := st.SearchLibrary("неттакой"); len(hits) != 0 {
+		t.Fatalf("miss %#v", hits)
+	}
+
+	hits := st.SearchLibrary("запис")
+	if len(hits) != 1 {
+		t.Fatalf("home hits %#v", hits)
+	}
+	if hits[0].Entry.Key != "id:home" || hits[0].WorkspaceID != home.ID || hits[0].WorkspaceName != home.Name {
+		t.Fatalf("home hit %#v", hits[0])
+	}
+	if len(hits[0].Lists) != 1 || hits[0].Lists[0].Name != "На отпуск" {
+		t.Fatalf("lists %#v", hits[0].Lists)
+	}
+
+	hits = st.SearchLibrary("УЧЕБ")
+	if len(hits) != 1 || hits[0].Entry.Key != "id:study" || hits[0].WorkspaceName != "Учёба" {
+		t.Fatalf("study %#v", hits)
+	}
+	if len(hits[0].Lists) != 0 {
+		t.Fatalf("study lists %#v", hits[0].Lists)
+	}
+
+	hits = st.SearchLibrary("и")
+	if len(hits) != 2 {
+		t.Fatalf("both %#v", hits)
+	}
+	if hits[0].Entry.Key != "id:study" || !hits[0].Current {
+		t.Fatalf("current first %#v", hits)
+	}
+}
