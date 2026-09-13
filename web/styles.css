@@ -605,6 +605,11 @@ body.lists-resizing .lists-resizer {
 .listsbar .workspace-card {
   min-height: 76px;
   padding: 12px 32px 12px 12px;
+  user-select: none;
+}
+
+.listsbar .workspace-card.current {
+  cursor: pointer;
 }
 
 .undo-box {
@@ -1775,6 +1780,28 @@ body.dragover:not(.reading) .shelf {
   margin: 0 auto;
 }
 
+.shelf-head-lead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.shelf-back {
+  flex: 0 0 auto;
+}
+
+body.list-view .shelf {
+  flex: 1 1 auto;
+  overflow: auto;
+  border-bottom: 0;
+}
+
+body.list-view .shelf-grid {
+  grid-template-rows: none;
+  padding-bottom: 32px;
+}
+
 .shelf-add {
   width: 28px;
   height: 28px;
@@ -1933,6 +1960,25 @@ body.dragover:not(.reading) .shelf {
 
 .dlg-card.add-book-dlg {
   width: min(420px, 100%);
+}
+
+.dlg-card.add-to-list-dlg {
+  width: min(880px, 100%);
+}
+
+.add-to-list-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.add-to-list-empty {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .add-book-hint {

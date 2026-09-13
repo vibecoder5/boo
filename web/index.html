@@ -167,7 +167,10 @@
 
       <section class="shelf" id="shelf">
         <div class="shelf-head">
-          <p class="eyebrow" id="shelfLabel">Полка</p>
+          <div class="shelf-head-lead">
+            <button class="text-btn shelf-back" id="listBackBtn" type="button" hidden>← Полка</button>
+            <p class="eyebrow" id="shelfLabel">Полка</p>
+          </div>
           <button class="icon-btn shelf-add" id="shelfAddBtn" type="button" aria-label="Добавить книгу" title="Добавить книгу">+</button>
         </div>
         <div class="shelf-grid" id="shelfGrid"></div>
@@ -403,6 +406,23 @@
         <button class="primary-btn" id="addBookFile" type="button">Выбрать файл</button>
         <button class="ghost-btn" id="addBookDemo" type="button">Демо-книга</button>
         <button class="ghost-btn" id="addBookGuide" type="button">Руководство</button>
+      </div>
+    </div>
+  </div>
+  <div class="dlg" id="addToListDlg" hidden>
+    <div class="dlg-backdrop" id="addToListBackdrop"></div>
+    <div class="dlg-card add-to-list-dlg" role="dialog" aria-modal="true" aria-labelledby="addToListTitle">
+      <div class="dlg-head">
+        <div>
+          <p class="eyebrow" id="addToListEyebrow">Список</p>
+          <h2 id="addToListTitle">Добавить книгу</h2>
+        </div>
+        <button class="icon-btn" id="addToListClose" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <p class="add-book-hint">Книги с текущей полки, которых ещё нет в списке. Новый файл тоже попадёт в список.</p>
+      <div class="add-to-list-grid" id="addToListGrid"></div>
+      <div class="add-book-actions">
+        <button class="primary-btn" id="addToListFile" type="button">Выбрать файл</button>
       </div>
     </div>
   </div>

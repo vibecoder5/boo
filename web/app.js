@@ -27,6 +27,7 @@ const state = {
   library: [],
   lists: [],
   selectedListId: "",
+  openedListId: "",
   shelfCtxKey: "",
   bookNoteKey: "",
   ui: { theme: "dark", fontSize: 20, bookFont: "serif", bookFontSize: 20, uiFont: "system", uiFontSize: 16, lineHeight: 1.7, maxWidth: 38, sidebarWidth: 280, sidebarOpen: true, notesWidth: 300, notesOpen: true, historyWidth: 280, historyOpen: false, workspacesWidth: 280, workspacesOpen: true, listsWidth: 280, listsOpen: true },
@@ -976,6 +977,17 @@ function selectedList() {
   return (state.lists || []).find((item) => item.id === state.selectedListId) || null;
 }
 
+function openedList() {
+  if (!state.openedListId) return null;
+  return (state.lists || []).find((item) => item.id === state.openedListId) || null;
+}
+
+function syncListSelection() {
+  const ids = new Set((state.lists || []).map((item) => item.id));
+  if (state.selectedListId && !ids.has(state.selectedListId)) state.selectedListId = "";
+  if (state.openedListId && !ids.has(state.openedListId)) state.openedListId = "";
+}
+
 function renderLists() {
   const grid = $("listGrid");
   const title = $("listsTitle");
@@ -1020,14 +1032,43 @@ function renderLists() {
       e.stopPropagation();
       deleteList(item.id);
     });
+    remove.addEventListener("dblclick", (e) => e.stopPropagation());
     card.appendChild(remove);
+    card.title = "Двойной щелчок — открыть список";
     card.addEventListener("click", () => selectList(item.id));
+    card.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      openListScreen(item.id);
+    });
     grid.appendChild(card);
   }
 }
 
 function selectList(id) {
   state.selectedListId = id || "";
+  if (!id) state.openedListId = "";
+  else if (state.openedListId) state.openedListId = id;
+  closeAddToListDlg();
+  renderLists();
+  renderLibrary();
+}
+
+function openListScreen(id) {
+  if (!id) return;
+  hideShelfCtx();
+  hideWelcomeCtx();
+  closeAddBookDlg();
+  closeAddToListDlg();
+  state.selectedListId = id;
+  state.openedListId = id;
+  renderLists();
+  renderLibrary();
+}
+
+function closeListScreen() {
+  state.openedListId = "";
+  state.selectedListId = "";
+  closeAddToListDlg();
   renderLists();
   renderLibrary();
 }
@@ -1058,6 +1099,7 @@ async function deleteList(id) {
   try {
     const payload = await api(`/api/lists?id=${encodeURIComponent(id)}`, { method: "DELETE" });
     if (state.selectedListId === id) state.selectedListId = "";
+    if (state.openedListId === id) state.openedListId = "";
     await applyState(payload, Boolean(payload.book));
   } catch (err) {
     alert(err.message || "Не удалось удалить список");
@@ -1953,6 +1995,7 @@ function showAddBookDlg() {
   if (!dlg) return;
   hideWelcomeCtx();
   hideShelfCtx();
+  closeAddToListDlg();
   dlg.hidden = false;
 }
 
@@ -1961,27 +2004,39 @@ function closeAddBookDlg() {
   if (dlg) dlg.hidden = true;
 }
 
-function renderShelfPlaceholder() {
-  const card = document.createElement("button");
-  card.type = "button";
-  card.className = "shelf-card shelf-placeholder";
-  card.setAttribute("aria-label", "Добавить книгу");
-  const cover = document.createElement("div");
-  cover.className = "shelf-cover";
-  cover.textContent = "+";
-  card.appendChild(cover);
-  const label = document.createElement("p");
-  label.className = "shelf-placeholder-label";
-  label.textContent = "Добавить";
-  card.appendChild(label);
-  card.addEventListener("click", showAddBookDlg);
-  return card;
+function addToListDlgOpen() {
+  const dlg = $("addToListDlg");
+  return Boolean(dlg && !dlg.hidden);
 }
 
-function renderShelfCard(item) {
-  const card = document.createElement("button");
-  card.type = "button";
-  card.className = "shelf-card";
+function booksNotInList(list) {
+  return (state.library || []).filter((item) => !bookInList(list, item.key));
+}
+
+function showAddToListDlg() {
+  const dlg = $("addToListDlg");
+  const list = openedList();
+  if (!dlg || !list) return;
+  hideWelcomeCtx();
+  hideShelfCtx();
+  closeAddBookDlg();
+  const eyebrow = $("addToListEyebrow");
+  if (eyebrow) eyebrow.textContent = list.name || "Список";
+  renderAddToListGrid();
+  dlg.hidden = false;
+}
+
+function closeAddToListDlg() {
+  const dlg = $("addToListDlg");
+  if (dlg) dlg.hidden = true;
+}
+
+function onShelfAdd() {
+  if (state.openedListId) showAddToListDlg();
+  else showAddBookDlg();
+}
+
+function fillBookCard(card, item) {
   if (item.finished) card.classList.add("read");
   if (item.coverUrl) {
     const img = document.createElement("img");
@@ -2020,13 +2075,92 @@ function renderShelfCard(item) {
     mark.textContent = "Прочитано";
     card.appendChild(mark);
   }
+}
+
+function renderAddToListGrid() {
+  const grid = $("addToListGrid");
+  const list = openedList();
+  if (!grid) return;
+  grid.replaceChildren();
+  const books = booksNotInList(list);
+  if (!books.length) {
+    const empty = document.createElement("p");
+    empty.className = "add-to-list-empty";
+    empty.textContent = (state.library || []).length
+      ? "Все книги полки уже в этом списке."
+      : "На полке пока нет книг. Выберите файл ниже.";
+    grid.appendChild(empty);
+    return;
+  }
+  for (const item of books) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "shelf-card";
+    fillBookCard(card, item);
+    card.addEventListener("click", () => addPickedBook(item.key));
+    grid.appendChild(card);
+  }
+}
+
+async function addPickedBook(key) {
+  const list = openedList();
+  if (!list || !key) return;
+  try {
+    await addToList(list.id, key);
+    if (!addToListDlgOpen()) return;
+    if (!booksNotInList(openedList()).length) closeAddToListDlg();
+    else renderAddToListGrid();
+  } catch (err) {
+    alert(err.message || "Не удалось добавить в список");
+  }
+}
+
+async function addOpenedListBook(key) {
+  const listId = state.openedListId;
+  if (!listId || !key) return;
+  try {
+    await addToList(listId, key);
+  } catch (err) {
+    alert(err.message || "Не удалось добавить в список");
+  }
+}
+
+function renderShelfPlaceholder() {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "shelf-card shelf-placeholder";
+  const labelText = state.openedListId ? "Добавить в список" : "Добавить книгу";
+  card.setAttribute("aria-label", labelText);
+  const cover = document.createElement("div");
+  cover.className = "shelf-cover";
+  cover.textContent = "+";
+  card.appendChild(cover);
+  const label = document.createElement("p");
+  label.className = "shelf-placeholder-label";
+  label.textContent = "Добавить";
+  card.appendChild(label);
+  card.addEventListener("click", onShelfAdd);
+  return card;
+}
+
+function renderShelfCard(item, listId) {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "shelf-card";
+  fillBookCard(card, item);
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "remove";
-  remove.setAttribute("aria-label", "Убрать с полки");
+  remove.setAttribute("aria-label", listId ? "Убрать из списка" : "Убрать с полки");
   remove.textContent = "×";
   remove.addEventListener("click", (e) => {
     e.stopPropagation();
+    if (listId) {
+      removeFromList(listId, item.key).catch((err) => {
+        alert(err.message || "Не удалось убрать из списка");
+      });
+      return;
+    }
     removeFromShelf(item.key);
   });
   card.appendChild(remove);
@@ -2044,35 +2178,57 @@ function renderShelfCard(item) {
 function renderLibrary() {
   const shelf = $("shelf");
   const grid = $("shelfGrid");
-  const current = selectedList();
-  if (state.selectedListId && !current) state.selectedListId = "";
+  syncListSelection();
+  const listView = openedList();
+  const current = listView || selectedList();
   const shelfLabel = $("shelfLabel");
   if (shelfLabel) {
     const wsName = (state.workspace && state.workspace.name) || "";
-    if (current) {
+    if (listView) {
+      shelfLabel.textContent = listView.name || "Список";
+    } else if (current) {
       shelfLabel.textContent = `Список · ${current.name}`;
     } else {
       shelfLabel.textContent = wsName ? `Полка · ${wsName}` : "Полка";
     }
   }
+  const back = $("listBackBtn");
+  if (back) back.hidden = !listView || Boolean(state.book);
+  const addBtn = $("shelfAddBtn");
+  if (addBtn) {
+    const label = listView ? "Добавить в список" : "Добавить книгу";
+    addBtn.setAttribute("aria-label", label);
+    addBtn.title = label;
+  }
+  document.body.classList.toggle("list-view", Boolean(listView) && !state.book);
   const items = current
     ? (state.library || []).filter((item) => bookInList(current, item.key))
     : (state.library || []);
   shelf.hidden = Boolean(state.book);
+  if (!state.book) $("welcome").hidden = Boolean(listView);
   grid.replaceChildren();
   const slots = shelfSlotCount(items.length);
   for (let i = 0; i < slots; i += 1) {
     const item = items[i];
-    grid.appendChild(item ? renderShelfCard(item) : renderShelfPlaceholder());
+    grid.appendChild(item ? renderShelfCard(item, listView ? listView.id : "") : renderShelfPlaceholder());
+  }
+  if (addToListDlgOpen()) renderAddToListGrid();
+  if (!state.book) {
+    const title = listView ? (listView.name || "Список") : ((state.workspace && state.workspace.name) || "boo");
+    if ($("topTitle")) $("topTitle").textContent = title;
+    document.title = `${title} — boo`;
   }
 }
 
 function showBookChrome() {
   const hasBook = Boolean(state.book);
   document.body.classList.toggle("reading", hasBook);
-  $("welcome").hidden = hasBook;
+  $("welcome").hidden = hasBook || Boolean(openedList());
   $("shelf").hidden = hasBook;
-  if (hasBook) closeAddBookDlg();
+  if (hasBook) {
+    closeAddBookDlg();
+    closeAddToListDlg();
+  }
   $("reader").hidden = !hasBook;
   $("progressBar").hidden = !hasBook;
   $("sidebarProgress").hidden = !hasBook;
@@ -2094,9 +2250,11 @@ function showBookChrome() {
   renderDictionary();
   renderNotes();
   if (!hasBook) {
+    const listView = openedList();
     const wsName = (state.workspace && state.workspace.name) || "boo";
-    $("topTitle").textContent = wsName;
-    document.title = `${wsName} — boo`;
+    const title = listView ? (listView.name || "Список") : wsName;
+    $("topTitle").textContent = title;
+    document.title = `${title} — boo`;
     if ($("toc")) $("toc").replaceChildren();
     if (!bookNoteOpen()) state.bookNoteKey = "";
     syncBookNoteFields(false);
@@ -2914,9 +3072,7 @@ async function applyState(payload, restore) {
   state.workspaces = payload.workspaces || [];
   state.library = payload.library || [];
   state.lists = payload.lists || [];
-  if (state.selectedListId && !(state.lists || []).some((item) => item.id === state.selectedListId)) {
-    state.selectedListId = "";
-  }
+  syncListSelection();
   state.bookmarks = payload.bookmarks || [];
   state.highlights = payload.highlights || [];
   state.notes = payload.notes || [];
@@ -2968,7 +3124,9 @@ async function uploadFile(file) {
     const body = new FormData();
     body.append("file", file);
     const payload = await api("/api/open", { method: "POST", body });
+    const key = payload.book && payload.book.key;
     await applyState(payload, true);
+    await addOpenedListBook(key);
   } catch (err) {
     alert(err.message || "Не удалось открыть файл");
   }
@@ -3170,7 +3328,9 @@ function pickBookFile() {
 async function openDemo() {
   try {
     const payload = await api("/api/demo", { method: "POST" });
+    const key = payload.book && payload.book.key;
     await applyState(payload, true);
+    await addOpenedListBook(key);
   } catch (err) {
     alert(err.message || "Не удалось открыть демо");
   }
@@ -3268,9 +3428,16 @@ $("exportBtn").addEventListener("click", () => exportLibrary());
 $("importBtn").addEventListener("click", pickImportFile);
 $("importInput").addEventListener("change", (e) => importLibrary(e.target.files[0]));
 $("fileInput").addEventListener("change", (e) => uploadFile(e.target.files[0]));
-$("shelfAddBtn").addEventListener("click", showAddBookDlg);
+$("shelfAddBtn").addEventListener("click", onShelfAdd);
+$("listBackBtn").addEventListener("click", closeListScreen);
 $("addBookClose").addEventListener("click", closeAddBookDlg);
 $("addBookBackdrop").addEventListener("click", closeAddBookDlg);
+$("addToListClose").addEventListener("click", closeAddToListDlg);
+$("addToListBackdrop").addEventListener("click", closeAddToListDlg);
+$("addToListFile").addEventListener("click", () => {
+  closeAddToListDlg();
+  pickBookFile();
+});
 $("addBookFile").addEventListener("click", () => {
   closeAddBookDlg();
   pickBookFile();
@@ -3286,7 +3453,8 @@ $("addBookGuide").addEventListener("click", () => {
 $("shelf").addEventListener("contextmenu", (e) => {
   if (e.target.closest(".shelf-card, input, textarea, a, button")) return;
   e.preventDefault();
-  showWelcomeCtx(e.clientX, e.clientY);
+  if (state.openedListId) showAddToListDlg();
+  else showWelcomeCtx(e.clientX, e.clientY);
 });
 $("welcomeCtxAdd").addEventListener("click", () => {
   hideWelcomeCtx();
@@ -3717,6 +3885,11 @@ window.addEventListener("keydown", (e) => {
       e.preventDefault();
       return;
     }
+    if (addToListDlgOpen()) {
+      closeAddToListDlg();
+      e.preventDefault();
+      return;
+    }
     if (!$("ctxMenu").hidden || ($("shelfCtx") && !$("shelfCtx").hidden) || ($("welcomeCtx") && !$("welcomeCtx").hidden)) {
       hideCtx();
       hideShelfCtx();
@@ -3752,6 +3925,11 @@ window.addEventListener("keydown", (e) => {
     }
     if (state.book && state.ui.historyOpen) {
       setHistoryOpen(false);
+      e.preventDefault();
+      return;
+    }
+    if (state.openedListId && !state.book) {
+      closeListScreen();
       e.preventDefault();
       return;
     }
