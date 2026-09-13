@@ -12,6 +12,8 @@
 - `internal/store` — `%AppData%/boo/state.json` (+ `library/`, `covers/`, `dictionaries/`).
 - `internal/dict` — DSL, XDXF, JSON, строки; lookup по слову.
 - `internal/desktop` — WebView2 на Windows; `Supported() == false` иначе.
+- `internal/install` — установка и удаление на Windows; `%AppData%/boo` не трогает.
+- `cmd/installer` — `boo-setup.exe`; сборка: `scripts/build-installer.ps1`.
 - `web/app.js`, `web/index.html`, `web/styles.css` — без бандлера.
 
 Ключ книги: `id:<identifier>` или `file:<sha256>`. Демо: `id:urn:uuid:boo-demo`. Руководство: `id:urn:uuid:boo-guide` (`docs/user-guide.md`, `POST /api/guide`).
@@ -34,5 +36,6 @@
 - После правок парсеров, store, server: `go test ./...`.
 - Не раздувать зависимости. Окно десктопа не портировать на другие ОС без явной задачи.
 - Заметное изменение поведения, API или persist — поднять SemVer в `CHANGELOG.md` (правило `.cursor/rules/versioning.mdc`).
+- Релиз (тег `vX.Y.Z`, GitHub, `boo-setup.exe`): скилл `.cursor/skills/create-release/SKILL.md`.
 
 Подробности для людей: `README.md`, `docs/user-guide.md`, `CHANGELOG.md`.

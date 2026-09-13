@@ -1,6 +1,7 @@
 /boo
 /boo.exe
 *.exe
+*.syso
 *.test
 .DS_Store
 dist/

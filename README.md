@@ -21,6 +21,21 @@
 - Windows: [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) для окна приложения
 - На Linux и macOS окно не собирается — используйте `-web` или браузер по умолчанию
 
+## Установка на Windows
+
+Соберите setup и запустите его:
+
+```powershell
+powershell -File scripts\build-installer.ps1
+.\dist\boo-setup.exe
+```
+
+Установка для текущего пользователя, без прав администратора. По умолчанию программа попадает в `%LocalAppData%\Programs\boo`, ярлык — в меню «Пуск». EPUB и FB2 можно открывать двойным щелчком.
+
+Тихая установка: `.\dist\boo-setup.exe -silent`. Удаление — из списка программ Windows или `uninstall.exe` в каталоге установки. Папка `%AppData%\boo` с книгами и заметками при удалении не трогается.
+
+Если WebView2 нет, установщик предупредит; читалку всё равно можно запустить с флагом `-web`.
+
 ## Сборка и запуск
 
 ```bash
