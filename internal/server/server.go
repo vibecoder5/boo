@@ -16,6 +16,7 @@ import (
 
 	"boo/docs"
 	"boo/internal/dict"
+	"boo/internal/drive"
 	"boo/internal/epub"
 	"boo/internal/open"
 	"boo/internal/store"
@@ -25,13 +26,14 @@ type Server struct {
 	mu     sync.Mutex
 	book   *epub.Book
 	store  *store.Store
+	drive  *drive.Service
 	ui     fs.FS
 	dictMu sync.Mutex
 	dicts  map[string]*dict.Index
 }
 
 func New(st *store.Store, ui fs.FS, book *epub.Book) *Server {
-	s := &Server{store: st, ui: ui, book: book, dicts: map[string]*dict.Index{}}
+	s := &Server{store: st, drive: drive.New(st.Dir()), ui: ui, book: book, dicts: map[string]*dict.Index{}}
 	if book != nil {
 		_ = s.remember(book)
 	}
@@ -106,6 +108,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/library/search", s.handleLibrarySearch)
 	mux.HandleFunc("GET /api/export", s.handleExport)
 	mux.HandleFunc("POST /api/import", s.handleImport)
+	mux.HandleFunc("GET /api/drive", s.handleDriveStatus)
+	mux.HandleFunc("POST /api/drive/credentials", s.handleDriveCredentials)
+	mux.HandleFunc("POST /api/drive/connect", s.handleDriveConnect)
+	mux.HandleFunc("GET /api/drive/callback", s.handleDriveCallback)
+	mux.HandleFunc("POST /api/drive/sync", s.handleDriveSync)
+	mux.HandleFunc("POST /api/drive/disconnect", s.handleDriveDisconnect)
 	mux.HandleFunc("GET /res", s.handleResource)
 	mux.HandleFunc("GET /{$}", s.handleIndex)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.ui))))
@@ -145,6 +153,9 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		"tocFold":      []string{},
 		"readChapters": []int{},
 		"dictionaries": s.store.Dictionaries(),
+	}
+	if s.drive != nil {
+		payload["drive"] = s.drive.Status()
 	}
 	if book != nil {
 		if p, ok := s.store.Progress(book.Key); ok {

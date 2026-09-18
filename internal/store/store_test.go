@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1526,5 +1527,90 @@ func TestWelcomeBackground(t *testing.T) {
 	}
 	if _, err := st.WelcomeBackgroundFile(); err == nil {
 		t.Fatal("cleared file still there")
+	}
+}
+
+func TestSyncFilesAndReload(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Persist(); err != nil {
+		t.Fatal(err)
+	}
+	bookPath, err := st.SaveBookFile("id:1", "a.fb2", []byte("<FictionBook/>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(Entry{Key: "id:1", Title: "Книга", Path: bookPath, Format: "fb2"}); err != nil {
+		t.Fatal(err)
+	}
+	tokenDir := filepath.Join(st.Dir(), DriveDirName)
+	if err := os.MkdirAll(tokenDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tokenDir, "token.json"), []byte(`{"access_token":"secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files, err := st.SyncFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, f := range files {
+		seen[f.Rel] = true
+		if strings.Contains(f.Rel, "token") || strings.HasPrefix(f.Rel, DriveDirName) {
+			t.Fatalf("token leaked: %#v", f)
+		}
+	}
+	if !seen["state.json"] {
+		t.Fatal("missing state.json")
+	}
+	if len(seen) < 2 {
+		t.Fatalf("expected book file too: %#v", seen)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(st.Dir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data Data
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	data.Workspaces[0].Name = "После синка"
+	out, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(st.Dir(), "state.json"), out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if st.CurrentWorkspace().Name != "После синка" {
+		t.Fatalf("reload %#v", st.CurrentWorkspace())
+	}
+}
+
+func TestSafeSyncRel(t *testing.T) {
+	if _, ok := SafeSyncRel("state.json"); !ok {
+		t.Fatal("state")
+	}
+	if _, ok := SafeSyncRel("library/book.epub"); !ok {
+		t.Fatal("library")
+	}
+	if _, ok := SafeSyncRel("../secret"); ok {
+		t.Fatal("dotdot")
+	}
+	if _, ok := SafeSyncRel("drive/token.json"); ok {
+		t.Fatal("drive")
+	}
+	if _, ok := SafeSyncRel("library/foo.tmp"); ok {
+		t.Fatal("tmp")
 	}
 }

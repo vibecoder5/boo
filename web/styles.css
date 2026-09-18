@@ -1692,6 +1692,38 @@ body.dragover:not(.reading) .shelf {
   line-height: 1.5;
 }
 
+.drive-box {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.drive-creds {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.drive-creds input {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 80%, transparent);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.drive-creds input:focus {
+  outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.drive-creds .text-btn {
+  align-self: flex-start;
+}
+
 .workspaces-head {
   display: flex;
   align-items: flex-end;

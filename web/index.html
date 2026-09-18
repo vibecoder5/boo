@@ -24,6 +24,22 @@
           </div>
           <p class="transfer-hint">Архив включает книги, обложки, словари, фон экрана, прогресс, закладки, заметки, списки и настройки. Импорт заменит текущую библиотеку.</p>
           <input id="importInput" type="file" accept=".zip,application/zip" hidden>
+          <div class="drive-box" id="driveBox">
+            <div class="bookmarks-head">
+              <p class="eyebrow">Google Диск</p>
+              <div class="workspaces-actions">
+                <button class="text-btn" id="driveConnectBtn" type="button">Подключить</button>
+                <button class="text-btn" id="driveSyncBtn" type="button" hidden>Синхронизировать</button>
+                <button class="text-btn" id="driveDisconnectBtn" type="button" hidden>Отключить</button>
+              </div>
+            </div>
+            <p class="transfer-hint" id="driveHint">Книги и настройки можно держать в папке boo на Google Диске. Пока диск не подключите, в сеть ничего не уходит.</p>
+            <div class="drive-creds" id="driveCreds">
+              <input id="driveClientId" type="text" autocomplete="off" spellcheck="false" placeholder="Идентификатор клиента" aria-label="Идентификатор клиента Google">
+              <input id="driveClientSecret" type="password" autocomplete="off" placeholder="Секрет клиента" aria-label="Секрет клиента Google">
+              <button class="text-btn" id="driveSaveCreds" type="button">Сохранить ключ</button>
+            </div>
+          </div>
         </section>
         <section class="sidebar-panel" id="fontsBox">
           <p class="eyebrow">Оформление</p>

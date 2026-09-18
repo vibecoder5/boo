@@ -99,6 +99,7 @@ func run() error {
 			return <-serveErr
 		}
 		srv.RecordSession()
+		srv.SyncDriveOnClose()
 		return nil
 	}
 

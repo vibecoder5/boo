@@ -13,6 +13,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"boo/internal/drive"
 	"boo/internal/epub"
 	"boo/internal/store"
 )
@@ -1860,5 +1861,98 @@ func TestWelcomeBackgroundAPI(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != 404 {
 		t.Fatalf("deleted get: %d", res.StatusCode)
+	}
+}
+
+func TestDriveAPI(t *testing.T) {
+	st := testStore(t)
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
+	srv := New(st, fs.FS(ui), nil)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	res, err := http.Get(ts.URL + "/api/drive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("status: %d", res.StatusCode)
+	}
+	var st0 map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&st0); err != nil {
+		t.Fatal(err)
+	}
+	if st0["connected"] == true || st0["hasCredentials"] == true {
+		t.Fatalf("empty %#v", st0)
+	}
+
+	res, err = http.Post(ts.URL+"/api/drive/sync", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 400 || !strings.Contains(string(body), "ключ") {
+		t.Fatalf("sync without key: %d %s", res.StatusCode, body)
+	}
+
+	res, err = http.Post(ts.URL+"/api/drive/credentials", "application/json", strings.NewReader(`{"clientId":"id","clientSecret":"secret"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"hasCredentials":true`) {
+		t.Fatalf("creds: %d %s", res.StatusCode, body)
+	}
+
+	res, err = http.Post(ts.URL+"/api/drive/sync", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 400 || !strings.Contains(string(body), "не подключён") {
+		t.Fatalf("sync without login: %d %s", res.StatusCode, body)
+	}
+
+	srv.drive = drive.NewMemory(st.Dir())
+	if err := st.Persist(); err != nil {
+		t.Fatal(err)
+	}
+	res, err = http.Post(ts.URL+"/api/drive/sync", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("sync: %d %s", res.StatusCode, body)
+	}
+	var synced map[string]any
+	if err := json.Unmarshal(body, &synced); err != nil {
+		t.Fatal(err)
+	}
+	drv, _ := synced["drive"].(map[string]any)
+	if drv["connected"] != true {
+		t.Fatalf("drive after sync %#v", drv)
+	}
+
+	res, err = http.Post(ts.URL+"/api/drive/disconnect", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("disconnect: %d %s", res.StatusCode, body)
+	}
+	if err := json.Unmarshal(body, &synced); err != nil {
+		t.Fatal(err)
+	}
+	drv, _ = synced["drive"].(map[string]any)
+	if drv["connected"] == true {
+		t.Fatalf("still connected %#v", drv)
 	}
 }
