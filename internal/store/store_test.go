@@ -1364,3 +1364,100 @@ func TestSearchLibrary(t *testing.T) {
 		t.Fatalf("current first %#v", hits)
 	}
 }
+
+func workspaceIDs(list []WorkspaceInfo) []string {
+	out := make([]string, 0, len(list))
+	for _, ws := range list {
+		out = append(out, ws.ID)
+	}
+	return out
+}
+
+func TestWorkspaceOrderAndPin(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := st.CurrentWorkspace()
+	second, err := st.CreateWorkspace("Учёба")
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := st.CreateWorkspace("Дача")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := st.Workspaces()
+	if len(list) != 3 || list[0].ID != first.ID || list[1].ID != second.ID || list[2].ID != third.ID {
+		t.Fatalf("create should keep append order, got %#v current %#v", list, st.CurrentWorkspace())
+	}
+	if list[2].Current != true || list[0].Current {
+		t.Fatalf("current stays in place %#v", list)
+	}
+
+	if err := st.ReorderWorkspaces([]string{third.ID, first.ID, second.ID}); err != nil {
+		t.Fatal(err)
+	}
+	list = st.Workspaces()
+	if list[0].ID != third.ID || list[1].ID != first.ID || list[2].ID != second.ID {
+		t.Fatalf("reorder %#v", list)
+	}
+
+	if err := st.SetWorkspacePinned(first.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetWorkspacePinned(second.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	list = st.Workspaces()
+	if !list[0].Pinned || !list[1].Pinned || list[2].Pinned {
+		t.Fatalf("pins %#v", list)
+	}
+	if list[0].ID != first.ID || list[1].ID != second.ID || list[2].ID != third.ID {
+		t.Fatalf("pinned first %#v", list)
+	}
+
+	if err := st.ReorderWorkspaces([]string{second.ID, first.ID, third.ID}); err != nil {
+		t.Fatal(err)
+	}
+	list = st.Workspaces()
+	if list[0].ID != second.ID || list[1].ID != first.ID || list[2].ID != third.ID {
+		t.Fatalf("pinned reorder %#v", list)
+	}
+	if !list[0].Pinned || !list[1].Pinned || list[2].Pinned {
+		t.Fatalf("pins kept %#v", list)
+	}
+
+	st2, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	again := st2.Workspaces()
+	if fmtIDs := workspaceIDs(again); len(fmtIDs) != 3 || fmtIDs[0] != second.ID || fmtIDs[1] != first.ID || fmtIDs[2] != third.ID {
+		t.Fatalf("persist %#v", again)
+	}
+	if !again[0].Pinned || !again[1].Pinned || again[2].Pinned {
+		t.Fatalf("persist pins %#v", again)
+	}
+
+	if err := st.SetWorkspacePinned(second.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	list = st.Workspaces()
+	if list[0].ID != first.ID || !list[0].Pinned || list[1].Pinned || list[2].Pinned {
+		t.Fatalf("unpin %#v", list)
+	}
+
+	if err := st.ReorderWorkspaces([]string{first.ID, second.ID}); err == nil {
+		t.Fatal("incomplete")
+	}
+	if err := st.ReorderWorkspaces([]string{first.ID, second.ID, "missing"}); err == nil {
+		t.Fatal("missing")
+	}
+	if err := st.SetWorkspacePinned("missing", true); err == nil {
+		t.Fatal("pin missing")
+	}
+}

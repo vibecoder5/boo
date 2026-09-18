@@ -309,6 +309,100 @@ func TestWorkspaceAPI(t *testing.T) {
 	}
 }
 
+func workspaceIDsFromState(state map[string]any) []string {
+	raw, _ := state["workspaces"].([]any)
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		ws, _ := item.(map[string]any)
+		id, _ := ws["id"].(string)
+		out = append(out, id)
+	}
+	return out
+}
+
+func TestWorkspaceOrderAPI(t *testing.T) {
+	st := testStore(t)
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
+	srv := New(st, fs.FS(ui), nil)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	res, err := http.Get(ts.URL + "/api/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var state map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	firstID := workspaceIDsFromState(state)[0]
+
+	res, err = http.Post(ts.URL+"/api/workspaces", "application/json", strings.NewReader(`{"name":"Учёба"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("create: %d", res.StatusCode)
+	}
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	ids := workspaceIDsFromState(state)
+	if len(ids) != 2 || ids[0] != firstID {
+		t.Fatalf("append order %#v first %s", ids, firstID)
+	}
+	secondID := ids[1]
+
+	req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/workspaces/order", strings.NewReader(`{"ids":["`+secondID+`","`+firstID+`"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	out, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Body.Close()
+	if out.StatusCode != 200 {
+		t.Fatalf("order: %d", out.StatusCode)
+	}
+	if err := json.NewDecoder(out.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	ids = workspaceIDsFromState(state)
+	if len(ids) != 2 || ids[0] != secondID || ids[1] != firstID {
+		t.Fatalf("reordered %#v", ids)
+	}
+
+	req, err = http.NewRequest(http.MethodPut, ts.URL+"/api/workspaces/pin", strings.NewReader(`{"id":"`+firstID+`","pinned":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	out, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Body.Close()
+	if out.StatusCode != 200 {
+		t.Fatalf("pin: %d", out.StatusCode)
+	}
+	if err := json.NewDecoder(out.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := state["workspaces"].([]any)
+	first, _ := raw[0].(map[string]any)
+	second, _ := raw[1].(map[string]any)
+	if first["id"] != firstID || first["pinned"] != true {
+		t.Fatalf("pinned first %#v", first)
+	}
+	if second["id"] != secondID || second["pinned"] == true {
+		t.Fatalf("unpinned second %#v", second)
+	}
+}
+
 func TestMoveBookAPI(t *testing.T) {
 	st := testStore(t)
 	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
