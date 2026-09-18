@@ -37,6 +37,9 @@ const state = {
   saving: false,
   query: "",
   hits: [],
+  shelfQuery: "",
+  shelfHits: [],
+  shelfHitIndex: -1,
   bookmarks: [],
   highlights: [],
   notes: [],
@@ -52,6 +55,15 @@ const state = {
 };
 
 const NOTE_COLORS = ["yellow", "green", "blue", "pink", "orange"];
+const MAX_READ_DURATION_SEC = 24 * 60 * 60;
+
+const readTimer = {
+  status: "idle",
+  elapsedMs: 0,
+  startedAt: 0,
+  bookKey: "",
+  tick: 0,
+};
 
 const $ = (id) => document.getElementById(id);
 
@@ -1296,7 +1308,7 @@ function fillHistoryList(list, items) {
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "history-empty";
-    empty.textContent = "Пока нет записей. Они появятся, когда вы закроете книгу или добавите отметку.";
+    empty.textContent = "Пока нет записей. Они появятся, когда вы закроете книгу, остановите таймер или добавите отметку.";
     list.appendChild(empty);
     return;
   }
@@ -1305,6 +1317,7 @@ function fillHistoryList(list, items) {
     row.type = "button";
     row.className = "history-item";
     if (item.kind === "note") row.classList.add("note");
+    if (item.kind === "read_time") row.classList.add("read-time");
     if (!historyCanOpen(item)) row.classList.add("dead");
     const when = document.createElement("span");
     when.className = "when";
@@ -1314,6 +1327,12 @@ function fillHistoryList(list, items) {
     detail.className = "detail";
     if (item.kind === "note") {
       title.textContent = item.text || "Отметка";
+      const bits = [item.title || "Книга"];
+      const progress = historyProgressText(item);
+      if (progress) bits.push(progress);
+      detail.textContent = bits.join(" · ");
+    } else if (item.kind === "read_time") {
+      title.textContent = item.text || "Чтение";
       const bits = [item.title || "Книга"];
       const progress = historyProgressText(item);
       if (progress) bits.push(progress);
@@ -1435,6 +1454,153 @@ async function restoreUndo(item, index) {
     await applyUndoPayload(payload);
   } catch (err) {
     alert(err.message || "Не удалось откатиться");
+  }
+}
+
+function readTimerElapsedMs() {
+  let ms = readTimer.elapsedMs;
+  if (readTimer.status === "running" && readTimer.startedAt) {
+    ms += Date.now() - readTimer.startedAt;
+  }
+  return Math.max(0, ms);
+}
+
+function formatTimerClock(ms) {
+  const sec = Math.floor(Math.max(0, ms) / 1000);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function stopReadTimerTick() {
+  if (readTimer.tick) {
+    window.clearInterval(readTimer.tick);
+    readTimer.tick = 0;
+  }
+}
+
+function resetReadTimer() {
+  stopReadTimerTick();
+  readTimer.status = "idle";
+  readTimer.elapsedMs = 0;
+  readTimer.startedAt = 0;
+  readTimer.bookKey = "";
+  renderReadTimer();
+}
+
+function renderReadTimer() {
+  const box = $("readTimer");
+  const time = $("readTimerTime");
+  const start = $("readTimerStart");
+  const pause = $("readTimerPause");
+  const stop = $("readTimerStop");
+  if (!box || !time || !start || !pause || !stop) return;
+  const hasBook = Boolean(state.book);
+  const status = hasBook ? readTimer.status : "idle";
+  const ms = hasBook ? readTimerElapsedMs() : 0;
+  box.hidden = !hasBook;
+  box.classList.toggle("running", status === "running");
+  box.classList.toggle("paused", status === "paused");
+  time.textContent = formatTimerClock(ms);
+  time.setAttribute("aria-label", `Время чтения ${time.textContent}`);
+  start.hidden = status === "running";
+  start.textContent = status === "paused" ? "Продолжить" : "Старт";
+  pause.hidden = status !== "running";
+  stop.hidden = status === "idle";
+}
+
+function startReadTimerTick() {
+  stopReadTimerTick();
+  readTimer.tick = window.setInterval(renderReadTimer, 250);
+}
+
+function startReadTimer() {
+  if (!state.book || !state.book.key) return;
+  if (readTimer.status === "running") return;
+  if (readTimer.status === "paused") {
+    readTimer.status = "running";
+    readTimer.startedAt = Date.now();
+  } else {
+    readTimer.status = "running";
+    readTimer.elapsedMs = 0;
+    readTimer.startedAt = Date.now();
+    readTimer.bookKey = state.book.key;
+  }
+  startReadTimerTick();
+  renderReadTimer();
+}
+
+function pauseReadTimer() {
+  if (readTimer.status !== "running") return;
+  readTimer.elapsedMs = readTimerElapsedMs();
+  readTimer.startedAt = 0;
+  readTimer.status = "paused";
+  stopReadTimerTick();
+  renderReadTimer();
+}
+
+function readTimerPayload(sec) {
+  const key = readTimer.bookKey || (state.book && state.book.key) || "";
+  const body = { key, durationSec: sec };
+  if (state.book && state.book.key === key) {
+    body.chapterIndex = state.chapterIndex;
+    body.scrollRatio = scrollRatio();
+  }
+  return body;
+}
+
+async function commitReadTimer(options) {
+  const keepOnError = Boolean(options && options.keepOnError);
+  const beacon = Boolean(options && options.beacon);
+  if (readTimer.status === "idle") return null;
+  const snapshot = {
+    status: readTimer.status,
+    elapsedMs: readTimerElapsedMs(),
+    bookKey: readTimer.bookKey,
+  };
+  let sec = Math.floor(snapshot.elapsedMs / 1000);
+  if (sec > MAX_READ_DURATION_SEC) sec = MAX_READ_DURATION_SEC;
+  const body = readTimerPayload(sec);
+  resetReadTimer();
+  if (sec < 1 || !body.key) return null;
+  if (beacon) {
+    navigator.sendBeacon("/api/history/read-time", new Blob([JSON.stringify(body)], { type: "application/json" }));
+    return null;
+  }
+  try {
+    const data = await api("/api/history/read-time", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return data.history || [];
+  } catch (err) {
+    if (keepOnError) {
+      readTimer.status = snapshot.status === "running" ? "paused" : snapshot.status;
+      readTimer.elapsedMs = snapshot.elapsedMs;
+      readTimer.bookKey = snapshot.bookKey;
+      stopReadTimerTick();
+      renderReadTimer();
+      throw err;
+    }
+    console.warn(err);
+    return null;
+  }
+}
+
+async function stopReadTimer() {
+  try {
+    const history = await commitReadTimer({ keepOnError: true });
+    if (history) {
+      state.history = history;
+      renderHistory();
+    }
+  } catch (err) {
+    alert(err.message || "Не удалось записать время чтения");
   }
 }
 
@@ -2175,6 +2341,126 @@ function renderShelfCard(item, listId) {
   return card;
 }
 
+function shelfSearchPlace(hit) {
+  const lines = [];
+  const wsName = hit.workspace && hit.workspace.name;
+  if (wsName) lines.push(`Пространство · ${wsName}`);
+  const lists = (hit.lists || []).map((item) => item.name).filter(Boolean);
+  if (lists.length) lines.push(`Список · ${lists.join(", ")}`);
+  return lines;
+}
+
+function clearShelfSearch() {
+  state.shelfQuery = "";
+  state.shelfHits = [];
+  state.shelfHitIndex = -1;
+  const input = $("shelfSearchInput");
+  if (input) input.value = "";
+  renderShelfSearchResults([]);
+}
+
+function renderShelfSearchResults(hits) {
+  const box = $("shelfSearchResults");
+  if (!box) return;
+  box.replaceChildren();
+  if (!state.shelfQuery) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  if (!hits.length) {
+    const empty = document.createElement("p");
+    empty.className = "shelf-search-empty";
+    empty.textContent = "Нет книг с таким названием";
+    box.appendChild(empty);
+    return;
+  }
+  hits.forEach((hit, i) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "shelf-search-hit";
+    if (i === state.shelfHitIndex) btn.classList.add("active");
+    if (hit.coverUrl) {
+      const img = document.createElement("img");
+      img.src = hit.coverUrl;
+      img.alt = "";
+      btn.appendChild(img);
+    } else {
+      const ph = document.createElement("div");
+      ph.className = "shelf-search-cover";
+      ph.textContent = ((hit.title || "?").trim().charAt(0) || "?").toUpperCase();
+      btn.appendChild(ph);
+    }
+    const body = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = hit.title || "Без названия";
+    body.appendChild(title);
+    if (hit.author) {
+      const author = document.createElement("span");
+      author.className = "meta";
+      author.textContent = hit.author;
+      body.appendChild(author);
+    }
+    for (const line of shelfSearchPlace(hit)) {
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      meta.textContent = line;
+      body.appendChild(meta);
+    }
+    btn.appendChild(body);
+    btn.addEventListener("click", () => openLibraryHit(hit));
+    box.appendChild(btn);
+  });
+}
+
+let shelfSearchTimer = 0;
+
+async function runShelfSearch(q) {
+  state.shelfQuery = q.trim();
+  state.shelfHitIndex = -1;
+  if (!state.shelfQuery) {
+    state.shelfHits = [];
+    renderShelfSearchResults([]);
+    return;
+  }
+  try {
+    const data = await api(`/api/library/search?q=${encodeURIComponent(state.shelfQuery)}`);
+    if (data.query !== state.shelfQuery) return;
+    state.shelfHits = data.hits || [];
+    state.shelfHitIndex = state.shelfHits.length ? 0 : -1;
+    renderShelfSearchResults(state.shelfHits);
+  } catch (err) {
+    state.shelfHits = [];
+    renderShelfSearchResults([]);
+    console.warn(err);
+  }
+}
+
+async function openLibraryHit(hit) {
+  if (!hit || !hit.key) return;
+  try {
+    const wsId = hit.workspace && hit.workspace.id;
+    if (wsId && state.workspace && wsId !== state.workspace.id) {
+      await flushBookMeta();
+      if (state.book) await saveProgress();
+      const payload = await api("/api/workspaces/current", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: wsId }),
+      });
+      await applyState(payload, false);
+    }
+    if (!hit.canOpen) {
+      alert("Файл книги недоступен");
+      return;
+    }
+    await openFromShelf(hit.key);
+    clearShelfSearch();
+  } catch (err) {
+    alert(err.message || "Не удалось открыть книгу");
+  }
+}
+
 function renderLibrary() {
   const shelf = $("shelf");
   const grid = $("shelfGrid");
@@ -2249,6 +2535,7 @@ function showBookChrome() {
   renderBookmarks();
   renderDictionary();
   renderNotes();
+  renderReadTimer();
   if (!hasBook) {
     const listView = openedList();
     const wsName = (state.workspace && state.workspace.name) || "boo";
@@ -3067,6 +3354,12 @@ function bindContentLinks() {
 }
 
 async function applyState(payload, restore) {
+  const nextKey = (payload.book && payload.book.key) || "";
+  const curKey = (state.book && state.book.key) || "";
+  if (curKey && curKey !== nextKey) {
+    const history = await commitReadTimer();
+    if (history) payload.history = history;
+  }
   state.book = payload.book;
   state.workspace = payload.workspace || { id: "", name: "Библиотека" };
   state.workspaces = payload.workspaces || [];
@@ -3521,6 +3814,32 @@ $("searchInput").addEventListener("keydown", (e) => {
     openChapter(hit.chapterIndex, "", true, state.query, hit.offset);
   }
 });
+$("shelfSearchInput").addEventListener("input", (e) => {
+  clearTimeout(shelfSearchTimer);
+  shelfSearchTimer = setTimeout(() => runShelfSearch(e.target.value), 220);
+});
+$("shelfSearchInput").addEventListener("focus", () => {
+  if (state.shelfQuery) renderShelfSearchResults(state.shelfHits);
+});
+$("shelfSearchInput").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" && state.shelfHits.length) {
+    e.preventDefault();
+    state.shelfHitIndex = Math.min(state.shelfHits.length - 1, Math.max(0, state.shelfHitIndex) + 1);
+    renderShelfSearchResults(state.shelfHits);
+    return;
+  }
+  if (e.key === "ArrowUp" && state.shelfHits.length) {
+    e.preventDefault();
+    state.shelfHitIndex = Math.max(0, (state.shelfHitIndex < 0 ? 0 : state.shelfHitIndex) - 1);
+    renderShelfSearchResults(state.shelfHits);
+    return;
+  }
+  if (e.key === "Enter" && state.shelfHits.length) {
+    e.preventDefault();
+    const hit = state.shelfHits[Math.max(0, state.shelfHitIndex)] || state.shelfHits[0];
+    openLibraryHit(hit);
+  }
+});
 $("shelfBtn").addEventListener("click", goShelf);
 $("tocFold").addEventListener("click", toggleTocSection);
 $("tocHideRead").addEventListener("click", toggleHideReadChapters);
@@ -3532,6 +3851,9 @@ $("closeNotes").addEventListener("click", () => setNotesOpen(false));
 $("notesRail").addEventListener("click", () => setNotesOpen(true));
 $("noteAdd").addEventListener("click", () => addNoteFromSelection("yellow"));
 $("historyBtn").addEventListener("click", () => setHistoryOpen(!state.ui.historyOpen));
+$("readTimerStart").addEventListener("click", startReadTimer);
+$("readTimerPause").addEventListener("click", pauseReadTimer);
+$("readTimerStop").addEventListener("click", () => stopReadTimer());
 $("closeHistory").addEventListener("click", () => setHistoryOpen(false));
 $("historyRail").addEventListener("click", () => setHistoryOpen(true));
 $("workspacesBtn").addEventListener("click", () => setWorkspacesOpen(!state.ui.workspacesOpen));
@@ -3833,6 +4155,10 @@ document.addEventListener("pointerdown", (e) => {
   if (!menu.hidden && !menu.contains(e.target)) hideCtx();
   if (shelfMenu && !shelfMenu.hidden && !shelfMenu.contains(e.target)) hideShelfCtx();
   if (welcomeMenu && !welcomeMenu.hidden && !welcomeMenu.contains(e.target)) hideWelcomeCtx();
+  const shelfSearch = $("shelfSearch");
+  if (shelfSearch && !shelfSearch.contains(e.target) && $("shelfSearchResults") && !$("shelfSearchResults").hidden) {
+    $("shelfSearchResults").hidden = true;
+  }
   if (e.button !== 2 && !$("content").contains(e.target) && !menu.contains(e.target)) {
     savedSel = null;
   }
@@ -3904,6 +4230,15 @@ window.addEventListener("keydown", (e) => {
     }
     if ($("workspaceForm") && !$("workspaceForm").hidden) {
       setWorkspaceFormOpen(false);
+      e.preventDefault();
+      return;
+    }
+    if (document.activeElement === $("shelfSearchInput") || ($("shelfSearchResults") && !$("shelfSearchResults").hidden)) {
+      if (state.shelfQuery) {
+        clearShelfSearch();
+      } else {
+        $("shelfSearchInput").blur();
+      }
       e.preventDefault();
       return;
     }
@@ -3997,11 +4332,16 @@ window.addEventListener("keydown", (e) => {
     toggleDictionary();
     return;
   }
-  if (e.key === "/" && state.book) {
+  if (e.key === "/") {
     e.preventDefault();
-    setSidebarOpen(true);
-    $("searchInput").focus();
-    $("searchInput").select();
+    if (state.book) {
+      setSidebarOpen(true);
+      $("searchInput").focus();
+      $("searchInput").select();
+    } else if ($("shelfSearchInput")) {
+      $("shelfSearchInput").focus();
+      $("shelfSearchInput").select();
+    }
     return;
   }
   if (e.key === "ArrowRight") openChapter(state.chapterIndex + 1, "", true);
@@ -4068,6 +4408,9 @@ function flushOnLeave() {
   };
   navigator.sendBeacon("/api/progress", new Blob([JSON.stringify(progress)], { type: "application/json" }));
   navigator.sendBeacon("/api/history/session", new Blob([JSON.stringify(progress)], { type: "application/json" }));
+  if (readTimer.status !== "idle") {
+    commitReadTimer({ beacon: true });
+  }
 }
 
 window.addEventListener("pagehide", flushOnLeave);

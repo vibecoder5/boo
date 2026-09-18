@@ -68,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("POST /api/history", s.handleAddHistory)
 	mux.HandleFunc("POST /api/history/session", s.handleHistorySession)
+	mux.HandleFunc("POST /api/history/read-time", s.handleHistoryReadTime)
 	mux.HandleFunc("GET /api/undo", s.handleUndoLog)
 	mux.HandleFunc("POST /api/undo", s.handleUndoLast)
 	mux.HandleFunc("POST /api/undo/restore", s.handleUndoRestore)
@@ -97,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/dictionaries/lookup", s.handleDictionaryLookup)
 	mux.HandleFunc("DELETE /api/library", s.handleLibraryDelete)
 	mux.HandleFunc("GET /api/library/cover", s.handleLibraryCover)
+	mux.HandleFunc("GET /api/library/search", s.handleLibrarySearch)
 	mux.HandleFunc("GET /api/export", s.handleExport)
 	mux.HandleFunc("POST /api/import", s.handleImport)
 	mux.HandleFunc("GET /res", s.handleResource)
@@ -423,6 +425,79 @@ func (s *Server) handleAddHistory(w http.ResponseWriter, r *http.Request) {
 		Author:       author,
 		Kind:         store.HistoryNote,
 		Text:         body.Text,
+		ChapterIndex: chapterIndex,
+		ChapterTitle: chapterTitle,
+		ScrollRatio:  scrollRatio,
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.writeHistory(w)
+}
+
+func (s *Server) handleHistoryReadTime(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Key          string   `json:"key"`
+		DurationSec  int      `json:"durationSec"`
+		ChapterIndex *int     `json:"chapterIndex"`
+		ScrollRatio  *float64 `json:"scrollRatio"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+	}
+	key := strings.TrimSpace(body.Key)
+	title, author := "", ""
+	if key != "" {
+		resolved, name, err := s.resolveTodoBook(key)
+		if err != nil {
+			http.Error(w, "книга не найдена", http.StatusNotFound)
+			return
+		}
+		key, title = resolved, name
+	} else if book := s.current(); book != nil {
+		key, title, author = book.Key, book.Title, book.Author
+	} else {
+		http.Error(w, "книга нужна", http.StatusBadRequest)
+		return
+	}
+	chapterIndex, chapterTitle := 0, ""
+	scrollRatio := 0.0
+	wantChapter, wantScroll := -1, -1.0
+	if body.ChapterIndex != nil {
+		wantChapter = *body.ChapterIndex
+	}
+	if body.ScrollRatio != nil {
+		wantScroll = *body.ScrollRatio
+	}
+	if book := s.current(); book != nil && book.Key == key {
+		chapterIndex, scrollRatio, chapterTitle = s.historyProgress(book, wantChapter, wantScroll)
+	} else if e, ok := s.store.Entry(key); ok {
+		chapterIndex = e.ChapterIndex
+		scrollRatio = e.ScrollRatio
+		if title == "" {
+			title = e.Title
+		}
+		if author == "" {
+			author = e.Author
+		}
+	}
+	if e, ok := s.store.Entry(key); ok {
+		if title == "" {
+			title = e.Title
+		}
+		if author == "" {
+			author = e.Author
+		}
+	}
+	if _, err := s.store.AddHistory(store.HistoryEntry{
+		BookKey:      key,
+		Title:        title,
+		Author:       author,
+		Kind:         store.HistoryReadTime,
+		DurationSec:  body.DurationSec,
 		ChapterIndex: chapterIndex,
 		ChapterTitle: chapterTitle,
 		ScrollRatio:  scrollRatio,
@@ -1193,9 +1268,37 @@ func (s *Server) dropAllDicts() {
 	s.dictMu.Unlock()
 }
 
+func (s *Server) handleLibrarySearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	hits := s.store.SearchLibrary(q)
+	out := make([]map[string]any, 0, len(hits))
+	for _, h := range hits {
+		e := h.Entry
+		cover := ""
+		if e.Cover != "" {
+			cover = "/api/library/cover?key=" + url.QueryEscape(e.Key)
+		}
+		out = append(out, map[string]any{
+			"key":      e.Key,
+			"title":    e.Title,
+			"author":   e.Author,
+			"format":   e.Format,
+			"coverUrl": cover,
+			"finished": e.Finished,
+			"canOpen":  bundledBook(e) || e.Path != "",
+			"workspace": map[string]any{
+				"id":   h.WorkspaceID,
+				"name": h.WorkspaceName,
+			},
+			"lists": h.Lists,
+		})
+	}
+	writeJSON(w, map[string]any{"query": q, "hits": out})
+}
+
 func (s *Server) handleLibraryCover(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
-	entry, ok := s.store.Entry(key)
+	entry, ok := s.store.EntryAnywhere(key)
 	if !ok || entry.Cover == "" {
 		http.NotFound(w, r)
 		return

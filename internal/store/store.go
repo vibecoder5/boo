@@ -54,8 +54,9 @@ type Workspace struct {
 }
 
 const (
-	HistorySession = "session"
-	HistoryNote    = "note"
+	HistorySession  = "session"
+	HistoryNote     = "note"
+	HistoryReadTime = "read_time"
 
 	UndoDeleteBook     = "delete_book"
 	UndoDeleteBookmark = "delete_bookmark"
@@ -69,6 +70,7 @@ type HistoryEntry struct {
 	Author       string    `json:"author"`
 	Kind         string    `json:"kind"`
 	Text         string    `json:"text,omitempty"`
+	DurationSec  int       `json:"durationSec,omitempty"`
 	ChapterIndex int       `json:"chapterIndex"`
 	ChapterTitle string    `json:"chapterTitle,omitempty"`
 	ScrollRatio  float64   `json:"scrollRatio"`
@@ -146,6 +148,19 @@ type WorkspaceInfo struct {
 	BookCount int       `json:"bookCount"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	Current   bool      `json:"current"`
+}
+
+type LibrarySearchList struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type LibraryHit struct {
+	Entry         Entry
+	WorkspaceID   string
+	WorkspaceName string
+	Current       bool
+	Lists         []LibrarySearchList
 }
 
 type Note struct {
@@ -526,6 +541,64 @@ func (s *Store) RenameWorkspace(id, name string) (WorkspaceInfo, error) {
 	return WorkspaceInfo{}, os.ErrNotExist
 }
 
+func (s *Store) SearchLibrary(q string) []LibraryHit {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return []LibraryHit{}
+	}
+	if runes := []rune(q); len(runes) > 80 {
+		q = string(runes[:80])
+	}
+	needle := strings.ToLower(q)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureWorkspace()
+	current := s.data.CurrentWorkspace
+	out := make([]LibraryHit, 0)
+	for _, ws := range s.data.Workspaces {
+		for _, e := range ws.Library {
+			if !strings.Contains(strings.ToLower(e.Title), needle) {
+				continue
+			}
+			lists := make([]LibrarySearchList, 0)
+			for _, list := range ws.Lists {
+				for _, key := range list.BookKeys {
+					if key != e.Key {
+						continue
+					}
+					lists = append(lists, LibrarySearchList{ID: list.ID, Name: list.Name})
+					break
+				}
+			}
+			out = append(out, LibraryHit{
+				Entry:         e,
+				WorkspaceID:   ws.ID,
+				WorkspaceName: ws.Name,
+				Current:       ws.ID == current,
+				Lists:         lists,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Current != out[j].Current {
+			return out[i].Current
+		}
+		ti := strings.ToLower(out[i].Entry.Title)
+		tj := strings.ToLower(out[j].Entry.Title)
+		if ti != tj {
+			return ti < tj
+		}
+		if out[i].WorkspaceName != out[j].WorkspaceName {
+			return strings.ToLower(out[i].WorkspaceName) < strings.ToLower(out[j].WorkspaceName)
+		}
+		return out[i].WorkspaceID < out[j].WorkspaceID
+	})
+	if len(out) > 40 {
+		out = out[:40]
+	}
+	return out
+}
+
 func (s *Store) Lists() []ReadingListInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -845,16 +918,16 @@ func (s *Store) migrateLibrary() {
 
 func defaultUI() UI {
 	return UI{
-		Theme:        "dark",
-		FontSize:     20,
-		BookFont:     "serif",
-		BookFontSize: 20,
-		UIFont:       "system",
-		UIFontSize:   16,
-		LineHeight:   1.7,
-		MaxWidth:     38,
-		SidebarWidth: 280,
-		SidebarOpen:  true,
+		Theme:           "dark",
+		FontSize:        20,
+		BookFont:        "serif",
+		BookFontSize:    20,
+		UIFont:          "system",
+		UIFontSize:      16,
+		LineHeight:      1.7,
+		MaxWidth:        38,
+		SidebarWidth:    280,
+		SidebarOpen:     true,
 		NotesWidth:      300,
 		NotesOpen:       true,
 		HistoryWidth:    280,
@@ -1305,6 +1378,21 @@ func (s *Store) Entry(key string) (Entry, bool) {
 	defer s.mu.Unlock()
 	for _, e := range s.ws().Library {
 		if e.Key == key {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
+
+func (s *Store) EntryAnywhere(key string) (Entry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureWorkspace()
+	if e, ok := libraryEntry(s.ws(), key); ok {
+		return e, true
+	}
+	for i := range s.data.Workspaces {
+		if e, ok := libraryEntry(&s.data.Workspaces[i], key); ok {
 			return e, true
 		}
 	}
@@ -1824,8 +1912,29 @@ const (
 	historyRecent      = 10
 	maxHistoryKeep     = 200
 	maxHistoryText     = 400
+	maxReadDurationSec = 24 * 60 * 60
 	sessionDedupWindow = 2 * time.Minute
 )
+
+func FormatReadDuration(sec int) string {
+	if sec < 0 {
+		sec = 0
+	}
+	h := sec / 3600
+	m := (sec % 3600) / 60
+	s := sec % 60
+	var parts []string
+	if h > 0 {
+		parts = append(parts, fmt.Sprintf("%d ч", h))
+	}
+	if m > 0 {
+		parts = append(parts, fmt.Sprintf("%d мин", m))
+	}
+	if s > 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%d с", s))
+	}
+	return strings.Join(parts, " ")
+}
 
 func historyID(e HistoryEntry) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("hist|%s|%s|%d", e.BookKey, e.Kind, time.Now().UnixNano())))
@@ -1874,12 +1983,23 @@ func (s *Store) AddHistory(e HistoryEntry) (HistoryEntry, error) {
 		return HistoryEntry{}, fmt.Errorf("книга нужна")
 	}
 	switch e.Kind {
-	case HistorySession, HistoryNote:
+	case HistorySession, HistoryNote, HistoryReadTime:
 	default:
 		if strings.TrimSpace(e.Text) != "" {
 			e.Kind = HistoryNote
 		} else {
 			e.Kind = HistorySession
+		}
+	}
+	if e.Kind == HistoryReadTime {
+		if e.DurationSec < 1 {
+			return HistoryEntry{}, fmt.Errorf("нужно время чтения")
+		}
+		if e.DurationSec > maxReadDurationSec {
+			e.DurationSec = maxReadDurationSec
+		}
+		if strings.TrimSpace(e.Text) == "" {
+			e.Text = "Чтение: " + FormatReadDuration(e.DurationSec)
 		}
 	}
 	e.Text = clipRunes(e.Text, maxHistoryText)

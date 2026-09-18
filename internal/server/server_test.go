@@ -1102,6 +1102,93 @@ func TestHistoryAPI(t *testing.T) {
 	}
 }
 
+func TestHistoryReadTimeAPI(t *testing.T) {
+	st := testStore(t)
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
+	book, err := demoBook()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	srv := New(st, fs.FS(ui), book)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	zero, err := http.Post(ts.URL+"/api/history/read-time", "application/json", strings.NewReader(`{"durationSec":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero.Body.Close()
+	if zero.StatusCode != 400 {
+		t.Fatalf("zero: %d", zero.StatusCode)
+	}
+
+	res, err := http.Post(ts.URL+"/api/history/read-time", "application/json", strings.NewReader(
+		`{"durationSec":125,"chapterIndex":1,"scrollRatio":0.5}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("read-time: %d", res.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := payload["history"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("after read-time %#v", payload)
+	}
+	item, _ := list[0].(map[string]any)
+	if item["kind"] != "read_time" || item["text"] != "Чтение: 2 мин 5 с" {
+		t.Fatalf("item %#v", item)
+	}
+	if int(item["durationSec"].(float64)) != 125 {
+		t.Fatalf("duration %#v", item)
+	}
+	if int(item["chapterIndex"].(float64)) != 1 {
+		t.Fatalf("chapter %#v", item)
+	}
+
+	closeRes, err := http.Post(ts.URL+"/api/close", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeRes.Body.Close()
+
+	missing, err := http.Post(ts.URL+"/api/history/read-time", "application/json", strings.NewReader(`{"durationSec":10}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing.Body.Close()
+	if missing.StatusCode != 400 {
+		t.Fatalf("no book: %d", missing.StatusCode)
+	}
+
+	again, err := http.Post(ts.URL+"/api/history/read-time", "application/json", strings.NewReader(
+		`{"key":"`+book.Key+`","durationSec":8}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Body.Close()
+	if again.StatusCode != 200 {
+		t.Fatalf("by key: %d", again.StatusCode)
+	}
+	if err := json.NewDecoder(again.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = payload["history"].([]any)
+	if len(list) != 3 {
+		t.Fatalf("session + two times %#v", payload)
+	}
+	if list[0].(map[string]any)["kind"] != "read_time" || list[0].(map[string]any)["text"] != "Чтение: 8 с" {
+		t.Fatalf("latest %#v", list[0])
+	}
+}
+
 func TestUndoAPI(t *testing.T) {
 	st := testStore(t)
 	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
@@ -1454,5 +1541,106 @@ func TestExportImportAPI(t *testing.T) {
 	marks := dst.Bookmarks(item["key"].(string))
 	if len(marks) != 1 || marks[0].Title != "Место" {
 		t.Fatalf("bookmarks %#v", marks)
+	}
+}
+
+func TestLibrarySearchAPI(t *testing.T) {
+	st := testStore(t)
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
+	book, err := demoBook()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	srv := New(st, fs.FS(ui), book)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	res, err := http.Get(ts.URL + "/api/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var state map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ := state["workspace"].(map[string]any)
+	firstID, _ := ws["id"].(string)
+	firstName, _ := ws["name"].(string)
+	lib, _ := state["library"].([]any)
+	if len(lib) != 1 {
+		t.Fatalf("library %#v", lib)
+	}
+	item, _ := lib[0].(map[string]any)
+	key, _ := item["key"].(string)
+	title, _ := item["title"].(string)
+	if firstID == "" || key == "" || title == "" {
+		t.Fatalf("ids %#v item %#v", ws, item)
+	}
+
+	res, err = http.Post(ts.URL+"/api/lists", "application/json", strings.NewReader(`{"name":"На отпуск","key":"`+key+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("list: %d", res.StatusCode)
+	}
+
+	res, err = http.Post(ts.URL+"/api/workspaces", "application/json", strings.NewReader(`{"name":"Учёба"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("workspace: %d", res.StatusCode)
+	}
+
+	q := string([]rune(title)[:4])
+	res, err = http.Get(ts.URL + "/api/library/search?q=" + url.QueryEscape(q))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("search: %d", res.StatusCode)
+	}
+	var found map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&found); err != nil {
+		t.Fatal(err)
+	}
+	hits, _ := found["hits"].([]any)
+	if len(hits) != 1 {
+		t.Fatalf("hits %#v", found)
+	}
+	hit, _ := hits[0].(map[string]any)
+	if hit["key"] != key || hit["title"] != title {
+		t.Fatalf("book %#v", hit)
+	}
+	hitWS, _ := hit["workspace"].(map[string]any)
+	if hitWS["id"] != firstID || hitWS["name"] != firstName {
+		t.Fatalf("workspace %#v", hitWS)
+	}
+	lists, _ := hit["lists"].([]any)
+	if len(lists) != 1 {
+		t.Fatalf("lists %#v", hit["lists"])
+	}
+	list, _ := lists[0].(map[string]any)
+	if list["name"] != "На отпуск" {
+		t.Fatalf("list %#v", list)
+	}
+
+	res, err = http.Get(ts.URL + "/api/library/search?q=" + url.QueryEscape("неттакойкниги"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if err := json.NewDecoder(res.Body).Decode(&found); err != nil {
+		t.Fatal(err)
+	}
+	hits, _ = found["hits"].([]any)
+	if len(hits) != 0 {
+		t.Fatalf("empty %#v", found)
 	}
 }

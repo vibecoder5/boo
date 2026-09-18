@@ -410,6 +410,70 @@ func TestHistory(t *testing.T) {
 	}
 }
 
+func TestFormatReadDuration(t *testing.T) {
+	cases := []struct {
+		sec  int
+		want string
+	}{
+		{0, "0 с"},
+		{1, "1 с"},
+		{59, "59 с"},
+		{60, "1 мин"},
+		{61, "1 мин 1 с"},
+		{3600, "1 ч"},
+		{3601, "1 ч 1 с"},
+		{3661, "1 ч 1 мин 1 с"},
+		{7322, "2 ч 2 мин 2 с"},
+	}
+	for _, c := range cases {
+		if got := FormatReadDuration(c.sec); got != c.want {
+			t.Fatalf("%d: got %q want %q", c.sec, got, c.want)
+		}
+	}
+}
+
+func TestHistoryReadTime(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddHistory(HistoryEntry{Kind: HistoryReadTime, DurationSec: 12}); err == nil {
+		t.Fatal("read time without book")
+	}
+	if err := st.Remember(Entry{Key: "id:1", Title: "Книга", Author: "А"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddHistory(HistoryEntry{BookKey: "id:1", Kind: HistoryReadTime, DurationSec: 0}); err == nil {
+		t.Fatal("zero duration")
+	}
+	got, err := st.AddHistory(HistoryEntry{
+		BookKey: "id:1", Kind: HistoryReadTime, DurationSec: 125, ChapterIndex: 2, ScrollRatio: 0.4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != HistoryReadTime || got.DurationSec != 125 || got.Text != "Чтение: 2 мин 5 с" {
+		t.Fatalf("entry %#v", got)
+	}
+	if got.Title != "Книга" || got.Author != "А" {
+		t.Fatalf("book fill %#v", got)
+	}
+	capped, err := st.AddHistory(HistoryEntry{BookKey: "id:1", Kind: HistoryReadTime, DurationSec: maxReadDurationSec + 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capped.DurationSec != maxReadDurationSec {
+		t.Fatalf("cap %d", capped.DurationSec)
+	}
+	list := st.History(10)
+	if len(list) != 2 || list[0].Kind != HistoryReadTime || list[1].Kind != HistoryReadTime {
+		t.Fatalf("keep both %#v", list)
+	}
+}
+
 func TestWorkspacesIndependent(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("APPDATA", dir)
@@ -1241,5 +1305,62 @@ func TestDictionaries(t *testing.T) {
 	}
 	if _, err := st.DictionaryFile(d.ID); err != os.ErrNotExist {
 		t.Fatalf("file %v", err)
+	}
+}
+
+func TestSearchLibrary(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(Entry{Key: "id:home", Title: "Записки на полях", Author: "А"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateList("На отпуск", "id:home"); err != nil {
+		t.Fatal(err)
+	}
+	home := st.CurrentWorkspace()
+	if _, err := st.CreateWorkspace("Учёба"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(Entry{Key: "id:study", Title: "Учебник физики", Author: "Б"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if hits := st.SearchLibrary(""); len(hits) != 0 {
+		t.Fatalf("empty %#v", hits)
+	}
+	if hits := st.SearchLibrary("неттакой"); len(hits) != 0 {
+		t.Fatalf("miss %#v", hits)
+	}
+
+	hits := st.SearchLibrary("запис")
+	if len(hits) != 1 {
+		t.Fatalf("home hits %#v", hits)
+	}
+	if hits[0].Entry.Key != "id:home" || hits[0].WorkspaceID != home.ID || hits[0].WorkspaceName != home.Name {
+		t.Fatalf("home hit %#v", hits[0])
+	}
+	if len(hits[0].Lists) != 1 || hits[0].Lists[0].Name != "На отпуск" {
+		t.Fatalf("lists %#v", hits[0].Lists)
+	}
+
+	hits = st.SearchLibrary("УЧЕБ")
+	if len(hits) != 1 || hits[0].Entry.Key != "id:study" || hits[0].WorkspaceName != "Учёба" {
+		t.Fatalf("study %#v", hits)
+	}
+	if len(hits[0].Lists) != 0 {
+		t.Fatalf("study lists %#v", hits[0].Lists)
+	}
+
+	hits = st.SearchLibrary("и")
+	if len(hits) != 2 {
+		t.Fatalf("both %#v", hits)
+	}
+	if hits[0].Entry.Key != "id:study" || !hits[0].Current {
+		t.Fatalf("current first %#v", hits)
 	}
 }
