@@ -1738,3 +1738,127 @@ func TestLibrarySearchAPI(t *testing.T) {
 		t.Fatalf("empty %#v", found)
 	}
 }
+
+var tinyPNG = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+	0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+	0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+	0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+	0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+}
+
+func TestWelcomeBackgroundAPI(t *testing.T) {
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
+	srv := New(testStore(t), fs.FS(ui), nil)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	res, err := http.Get(ts.URL + "/api/ui/background")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 404 {
+		t.Fatalf("empty get: %d", res.StatusCode)
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "wall.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(tinyPNG); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	res, err = http.Post(ts.URL+"/api/ui/background", mw.FormDataContentType(), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("upload: %d %s", res.StatusCode, body)
+	}
+	var saved store.UI
+	if err := json.NewDecoder(res.Body).Decode(&saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.WelcomeBackground == "" {
+		t.Fatalf("uploaded %#v", saved)
+	}
+
+	res, err = http.Get(ts.URL + "/api/ui/background")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("get: %d", res.StatusCode)
+	}
+	got, err := io.ReadAll(res.Body)
+	if err != nil || !bytes.Equal(got, tinyPNG) {
+		t.Fatalf("served %s %v", got, err)
+	}
+
+	res, err = http.Get(ts.URL + "/api/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var state map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	uiState, _ := state["ui"].(map[string]any)
+	if uiState["welcomeBackground"] != saved.WelcomeBackground {
+		t.Fatalf("state ui %#v", uiState)
+	}
+
+	var bad bytes.Buffer
+	bmw := multipart.NewWriter(&bad)
+	bfw, err := bmw.CreateFormFile("file", "note.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bfw.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if err := bmw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	res, err = http.Post(ts.URL+"/api/ui/background", bmw.FormDataContentType(), &bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 400 || !strings.Contains(string(body), "картинка") {
+		t.Fatalf("reject: %d %s", res.StatusCode, body)
+	}
+
+	del, err := http.NewRequest(http.MethodDelete, ts.URL+"/api/ui/background", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = http.DefaultClient.Do(del)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("delete: %d", res.StatusCode)
+	}
+	res, err = http.Get(ts.URL + "/api/ui/background")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 404 {
+		t.Fatalf("deleted get: %d", res.StatusCode)
+	}
+}

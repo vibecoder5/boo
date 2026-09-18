@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1459,5 +1460,71 @@ func TestWorkspaceOrderAndPin(t *testing.T) {
 	}
 	if err := st.SetWorkspacePinned("missing", true); err == nil {
 		t.Fatal("pin missing")
+	}
+}
+
+var tinyPNG = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+	0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+	0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+	0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+	0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+}
+
+func TestWelcomeBackground(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.WelcomeBackgroundFile(); err == nil {
+		t.Fatal("expected missing background")
+	}
+	name, err := st.SaveWelcomeBackground(tinyPNG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(name, ".png") || st.UI().WelcomeBackground != name {
+		t.Fatalf("saved %#v ui %#v", name, st.UI())
+	}
+	path, err := st.WelcomeBackgroundFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, tinyPNG) {
+		t.Fatalf("file %s %v", got, err)
+	}
+	if err := st.SetUI(UI{Theme: "light", FontSize: 22, LineHeight: 1.7, MaxWidth: 38, SidebarWidth: 280, NotesWidth: 300, HistoryWidth: 280}); err != nil {
+		t.Fatal(err)
+	}
+	if st.UI().WelcomeBackground != name {
+		t.Fatalf("setUI wiped background %#v", st.UI())
+	}
+	jpeg := append([]byte{0xff, 0xd8, 0xff, 0xd9}, []byte("more")...)
+	next, err := st.SaveWelcomeBackground(jpeg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next == name || !strings.HasSuffix(next, ".jpg") {
+		t.Fatalf("replace %#v", next)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("old file kept %v", err)
+	}
+	if _, err := st.SaveWelcomeBackground([]byte("not an image")); err == nil {
+		t.Fatal("expected reject")
+	}
+	if err := st.ClearWelcomeBackground(); err != nil {
+		t.Fatal(err)
+	}
+	if st.UI().WelcomeBackground != "" {
+		t.Fatalf("cleared %#v", st.UI())
+	}
+	if _, err := st.WelcomeBackgroundFile(); err == nil {
+		t.Fatal("cleared file still there")
 	}
 }

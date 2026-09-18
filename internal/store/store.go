@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -244,26 +245,27 @@ type Dictionary struct {
 }
 
 type UI struct {
-	Theme            string  `json:"theme"`
-	FontSize         int     `json:"fontSize"`
-	BookFont         string  `json:"bookFont"`
-	BookFontSize     int     `json:"bookFontSize"`
-	UIFont           string  `json:"uiFont"`
-	UIFontSize       int     `json:"uiFontSize"`
-	LineHeight       float64 `json:"lineHeight"`
-	MaxWidth         int     `json:"maxWidth"`
-	SidebarWidth     int     `json:"sidebarWidth"`
-	SidebarOpen      bool    `json:"sidebarOpen"`
-	NotesWidth       int     `json:"notesWidth"`
-	NotesOpen        bool    `json:"notesOpen"`
-	HistoryWidth     int     `json:"historyWidth"`
-	HistoryOpen      bool    `json:"historyOpen"`
-	WorkspacesWidth  int     `json:"workspacesWidth"`
-	WorkspacesOpen   bool    `json:"workspacesOpen"`
-	ListsWidth       int     `json:"listsWidth"`
-	ListsOpen        bool    `json:"listsOpen"`
-	TocCollapsed     bool    `json:"tocCollapsed"`
-	HideReadChapters bool    `json:"hideReadChapters"`
+	Theme             string  `json:"theme"`
+	FontSize          int     `json:"fontSize"`
+	BookFont          string  `json:"bookFont"`
+	BookFontSize      int     `json:"bookFontSize"`
+	UIFont            string  `json:"uiFont"`
+	UIFontSize        int     `json:"uiFontSize"`
+	LineHeight        float64 `json:"lineHeight"`
+	MaxWidth          int     `json:"maxWidth"`
+	SidebarWidth      int     `json:"sidebarWidth"`
+	SidebarOpen       bool    `json:"sidebarOpen"`
+	NotesWidth        int     `json:"notesWidth"`
+	NotesOpen         bool    `json:"notesOpen"`
+	HistoryWidth      int     `json:"historyWidth"`
+	HistoryOpen       bool    `json:"historyOpen"`
+	WorkspacesWidth   int     `json:"workspacesWidth"`
+	WorkspacesOpen    bool    `json:"workspacesOpen"`
+	ListsWidth        int     `json:"listsWidth"`
+	ListsOpen         bool    `json:"listsOpen"`
+	TocCollapsed      bool    `json:"tocCollapsed"`
+	HideReadChapters  bool    `json:"hideReadChapters"`
+	WelcomeBackground string  `json:"welcomeBackground,omitempty"`
 }
 
 func Open() (*Store, error) {
@@ -1062,6 +1064,7 @@ func normalizeUI(u UI) UI {
 	} else if u.ListsWidth < 220 || u.ListsWidth > 480 {
 		u.ListsWidth = d.ListsWidth
 	}
+	u.WelcomeBackground = normalizeWelcomeBackground(u.WelcomeBackground)
 	return u
 }
 
@@ -1074,8 +1077,105 @@ func (s *Store) UI() UI {
 func (s *Store) SetUI(u UI) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if strings.TrimSpace(u.WelcomeBackground) == "" {
+		u.WelcomeBackground = s.data.UI.WelcomeBackground
+	}
 	s.data.UI = normalizeUI(u)
 	return s.save()
+}
+
+const MaxWelcomeBackgroundBytes = 8 << 20
+
+func (s *Store) SaveWelcomeBackground(data []byte) (string, error) {
+	if len(data) == 0 {
+		return "", fmt.Errorf("нужна картинка")
+	}
+	if len(data) > MaxWelcomeBackgroundBytes {
+		return "", fmt.Errorf("картинка слишком большая")
+	}
+	ext, ok := welcomeBackgroundExt(data)
+	if !ok {
+		return "", fmt.Errorf("нужна картинка PNG, JPEG, WebP или GIF")
+	}
+	dir := filepath.Join(s.dir, "ui")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	name := "welcome-" + hex.EncodeToString(sum[:12]) + ext
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	old := s.data.UI.WelcomeBackground
+	s.data.UI.WelcomeBackground = name
+	err := s.save()
+	s.mu.Unlock()
+	if err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	if old != "" && old != name {
+		_ = os.Remove(filepath.Join(dir, filepath.Base(old)))
+	}
+	return name, nil
+}
+
+func (s *Store) ClearWelcomeBackground() error {
+	s.mu.Lock()
+	old := s.data.UI.WelcomeBackground
+	s.data.UI.WelcomeBackground = ""
+	err := s.save()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if old != "" {
+		_ = os.Remove(filepath.Join(s.dir, "ui", filepath.Base(old)))
+	}
+	return nil
+}
+
+func (s *Store) WelcomeBackgroundFile() (string, error) {
+	s.mu.Lock()
+	name := s.data.UI.WelcomeBackground
+	s.mu.Unlock()
+	if name == "" {
+		return "", os.ErrNotExist
+	}
+	path := filepath.Join(s.dir, "ui", filepath.Base(name))
+	if _, err := os.Stat(path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func welcomeBackgroundExt(data []byte) (string, bool) {
+	switch {
+	case bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")):
+		return ".png", true
+	case bytes.HasPrefix(data, []byte{0xff, 0xd8, 0xff}):
+		return ".jpg", true
+	case bytes.HasPrefix(data, []byte("GIF87a")), bytes.HasPrefix(data, []byte("GIF89a")):
+		return ".gif", true
+	case len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP":
+		return ".webp", true
+	}
+	return "", false
+}
+
+func normalizeWelcomeBackground(name string) string {
+	name = strings.TrimSpace(strings.ReplaceAll(name, "\\", "/"))
+	base, ok := safeBase(name)
+	if !ok {
+		return ""
+	}
+	switch strings.ToLower(filepath.Ext(base)) {
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+		return base
+	}
+	return ""
 }
 
 const maxDictionaries = 24

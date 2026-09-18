@@ -10,7 +10,7 @@ alwaysApply: true
 - Старт и флаги: `main.go` (`-port`, `-web`, `-no-open`, `-demo`).
 - Форматы → `*epub.Book`: `internal/open`, парсеры `epub` / `fb2` / `txt`.
 - API и UI: `internal/server`, статика `web/`.
-- Persist: `internal/store` → `%AppData%/boo` (`state.json`, `library/`, `covers/`, `dictionaries/`).
+- Persist: `internal/store` → `%AppData%/boo` (`state.json`, `library/`, `covers/`, `dictionaries/`, `ui/`).
 - Словари: `internal/dict`. Окно: `internal/desktop` (Windows/WebView2).
 
 Инварианты: не добавлять сеть и аккаунты; HTML глав санитайзить; `/res` — только картинки и шрифты; импорт ZIP заменяет библиотеку; undo покрывает книгу / закладку / заметку, не highlight.

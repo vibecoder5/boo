@@ -9,7 +9,7 @@
 - `internal/epub` — модель книги, санитайз HTML, поиск, демо `Sample()`.
 - `internal/fb2`, `internal/txt` — конвертеры в ту же модель.
 - `internal/server` — HTTP только с loopback; UI с `/` и `/static/`.
-- `internal/store` — `%AppData%/boo/state.json` (+ `library/`, `covers/`, `dictionaries/`).
+- `internal/store` — `%AppData%/boo/state.json` (+ `library/`, `covers/`, `dictionaries/`, `ui/`).
 - `internal/dict` — DSL, XDXF, JSON, строки; lookup по слову.
 - `internal/desktop` — WebView2 на Windows; `Supported() == false` иначе.
 - `internal/install` — установка и удаление на Windows; `%AppData%/boo` не трогает.

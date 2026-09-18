@@ -30,7 +30,7 @@ const state = {
   openedListId: "",
   shelfCtxKey: "",
   bookNoteKey: "",
-  ui: { theme: "dark", fontSize: 20, bookFont: "serif", bookFontSize: 20, uiFont: "system", uiFontSize: 16, lineHeight: 1.7, maxWidth: 38, sidebarWidth: 280, sidebarOpen: true, notesWidth: 300, notesOpen: true, historyWidth: 280, historyOpen: false, workspacesWidth: 280, workspacesOpen: true, listsWidth: 280, listsOpen: true },
+  ui: { theme: "dark", fontSize: 20, bookFont: "serif", bookFontSize: 20, uiFont: "system", uiFontSize: 16, lineHeight: 1.7, maxWidth: 38, sidebarWidth: 280, sidebarOpen: true, notesWidth: 300, notesOpen: true, historyWidth: 280, historyOpen: false, workspacesWidth: 280, workspacesOpen: true, listsWidth: 280, listsOpen: true, welcomeBackground: "" },
   history: [],
   undo: [],
   chapterIndex: 0,
@@ -338,6 +338,34 @@ function applyUI() {
   applyLists();
   applyTocFold();
   paintTocHideRead();
+  applyWelcomeBackground();
+}
+
+function welcomeBackgroundUrl(name) {
+  if (!name) return "";
+  return `/api/ui/background?v=${encodeURIComponent(name)}`;
+}
+
+function applyWelcomeBackground() {
+  const name = state.ui.welcomeBackground || "";
+  const url = welcomeBackgroundUrl(name);
+  const body = document.body;
+  if (url) {
+    body.classList.add("has-welcome-bg");
+    document.documentElement.style.setProperty("--welcome-bg", `url("${url}")`);
+  } else {
+    body.classList.remove("has-welcome-bg");
+    document.documentElement.style.removeProperty("--welcome-bg");
+  }
+  const preview = $("welcomeBgPreview");
+  const thumb = $("welcomeBgThumb");
+  const clear = $("welcomeBgClear");
+  if (preview) preview.hidden = !url;
+  if (thumb) {
+    if (url) thumb.src = url;
+    else thumb.removeAttribute("src");
+  }
+  if (clear) clear.hidden = !url;
 }
 
 function setSidebarOpen(open) {
@@ -611,6 +639,27 @@ async function uploadDictionary(file) {
     setSidebarOpen(true);
   } catch (err) {
     alert(err.message || "Не удалось подключить словарь");
+  }
+}
+
+async function uploadWelcomeBackground(file) {
+  if (!file) return;
+  try {
+    const body = new FormData();
+    body.append("file", file);
+    state.ui = await api("/api/ui/background", { method: "POST", body });
+    applyUI();
+  } catch (err) {
+    alert(err.message || "Не удалось сохранить картинку");
+  }
+}
+
+async function clearWelcomeBackground() {
+  try {
+    state.ui = await api("/api/ui/background", { method: "DELETE" });
+    applyUI();
+  } catch (err) {
+    alert(err.message || "Не удалось убрать картинку");
   }
 }
 
@@ -4192,6 +4241,12 @@ $("bookmarkBtn").addEventListener("click", addBookmark);
 $("bookmarkAdd").addEventListener("click", addBookmark);
 $("dictAdd").addEventListener("click", pickDictionaryFile);
 $("dictInput").addEventListener("change", (e) => uploadDictionary(e.target.files[0]));
+$("welcomeBgInput").addEventListener("change", (e) => {
+  const input = e.currentTarget;
+  uploadWelcomeBackground(input.files[0]);
+  input.value = "";
+});
+$("welcomeBgClear").addEventListener("click", () => clearWelcomeBackground());
 $("ctxTranslate").addEventListener("click", (e) => {
   const word = ctxDictWord;
   hideCtx();

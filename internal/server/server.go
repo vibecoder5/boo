@@ -73,6 +73,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/undo", s.handleUndoLast)
 	mux.HandleFunc("POST /api/undo/restore", s.handleUndoRestore)
 	mux.HandleFunc("PUT /api/ui", s.handleSaveUI)
+	mux.HandleFunc("GET /api/ui/background", s.handleWelcomeBackground)
+	mux.HandleFunc("POST /api/ui/background", s.handleSaveWelcomeBackground)
+	mux.HandleFunc("DELETE /api/ui/background", s.handleDeleteWelcomeBackground)
 	mux.HandleFunc("PUT /api/toc-fold", s.handleSaveTOCFold)
 	mux.HandleFunc("PUT /api/chapters/read", s.handleSetChapterRead)
 	mux.HandleFunc("POST /api/open", s.handleOpen)
@@ -943,6 +946,48 @@ func (s *Server) handleSaveUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.SetUI(ui); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, s.store.UI())
+}
+
+func (s *Server) handleWelcomeBackground(w http.ResponseWriter, r *http.Request) {
+	filePath, err := s.store.WelcomeBackgroundFile()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, max-age=31536000")
+	http.ServeFile(w, r, filePath)
+}
+
+func (s *Server) handleSaveWelcomeBackground(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, store.MaxWelcomeBackgroundBytes+1024)
+	if err := r.ParseMultipartForm(store.MaxWelcomeBackgroundBytes); err != nil {
+		http.Error(w, "файл слишком большой или повреждён", http.StatusBadRequest)
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "нужна картинка", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, store.MaxWelcomeBackgroundBytes+1))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if _, err := s.store.SaveWelcomeBackground(data); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, s.store.UI())
+}
+
+func (s *Server) handleDeleteWelcomeBackground(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.ClearWelcomeBackground(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

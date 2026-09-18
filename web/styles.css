@@ -1275,6 +1275,46 @@ body:not(.reading) .sidebar-book {
   color: var(--muted);
 }
 
+.welcome-bg-preview {
+  margin-top: 10px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  aspect-ratio: 16 / 9;
+  background: var(--bg);
+}
+
+.welcome-bg-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+body.has-welcome-bg:not(.reading) .main {
+  background-image: var(--welcome-bg);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+body.has-welcome-bg:not(.reading) .shelf {
+  background: color-mix(in srgb, var(--bg) 42%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+body.has-welcome-bg:not(.reading) .welcome {
+  background: color-mix(in srgb, var(--bg) 28%, transparent);
+}
+
+body.has-welcome-bg:not(.reading) .welcome .todo-box,
+body.has-welcome-bg:not(.reading) .welcome .history-box {
+  padding: 16px 18px 18px;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
 .bookmarks {
   margin: 0 0 18px;
 }
