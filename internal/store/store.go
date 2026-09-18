@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -49,6 +50,7 @@ type Workspace struct {
 	UndoLog      []UndoAction        `json:"undoLog,omitempty"`
 	TOCFold      map[string][]string `json:"tocFold"`
 	ReadChapters map[string][]int    `json:"readChapters,omitempty"`
+	Pinned       bool                `json:"pinned,omitempty"`
 	CreatedAt    time.Time           `json:"createdAt"`
 	UpdatedAt    time.Time           `json:"updatedAt"`
 }
@@ -148,6 +150,7 @@ type WorkspaceInfo struct {
 	BookCount int       `json:"bookCount"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	Current   bool      `json:"current"`
+	Pinned    bool      `json:"pinned"`
 }
 
 type LibrarySearchList struct {
@@ -319,7 +322,9 @@ func emptyWorkspace(id, name string) Workspace {
 }
 
 func workspaceID() string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("ws|%d", time.Now().UnixNano())))
+	var nonce [12]byte
+	_, _ = rand.Read(nonce[:])
+	sum := sha256.Sum256([]byte(fmt.Sprintf("ws|%d|%x", time.Now().UnixNano(), nonce)))
 	return hex.EncodeToString(sum[:10])
 }
 
@@ -446,26 +451,35 @@ func (s *Store) ws() *Workspace {
 	return &s.data.Workspaces[0]
 }
 
+func workspaceInfo(ws Workspace, current string) WorkspaceInfo {
+	return WorkspaceInfo{
+		ID:        ws.ID,
+		Name:      ws.Name,
+		BookCount: len(ws.Library),
+		UpdatedAt: ws.UpdatedAt,
+		Current:   ws.ID == current,
+		Pinned:    ws.Pinned,
+	}
+}
+
+func sortWorkspaceInfos(out []WorkspaceInfo) {
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Pinned != out[j].Pinned {
+			return out[i].Pinned
+		}
+		return false
+	})
+}
+
 func (s *Store) Workspaces() []WorkspaceInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensureWorkspace()
 	out := make([]WorkspaceInfo, 0, len(s.data.Workspaces))
 	for _, ws := range s.data.Workspaces {
-		out = append(out, WorkspaceInfo{
-			ID:        ws.ID,
-			Name:      ws.Name,
-			BookCount: len(ws.Library),
-			UpdatedAt: ws.UpdatedAt,
-			Current:   ws.ID == s.data.CurrentWorkspace,
-		})
+		out = append(out, workspaceInfo(ws, s.data.CurrentWorkspace))
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Current != out[j].Current {
-			return out[i].Current
-		}
-		return out[i].UpdatedAt.After(out[j].UpdatedAt)
-	})
+	sortWorkspaceInfos(out)
 	return out
 }
 
@@ -473,13 +487,7 @@ func (s *Store) CurrentWorkspace() WorkspaceInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ws := s.ws()
-	return WorkspaceInfo{
-		ID:        ws.ID,
-		Name:      ws.Name,
-		BookCount: len(ws.Library),
-		UpdatedAt: ws.UpdatedAt,
-		Current:   true,
-	}
+	return workspaceInfo(*ws, ws.ID)
 }
 
 func (s *Store) CreateWorkspace(name string) (WorkspaceInfo, error) {
@@ -505,7 +513,7 @@ func (s *Store) addWorkspace(name string, switchTo bool) (WorkspaceInfo, error) 
 	if err := s.save(); err != nil {
 		return WorkspaceInfo{}, err
 	}
-	return WorkspaceInfo{ID: ws.ID, Name: ws.Name, Current: switchTo, UpdatedAt: ws.UpdatedAt}, nil
+	return workspaceInfo(ws, s.data.CurrentWorkspace), nil
 }
 
 func (s *Store) RenameWorkspace(id, name string) (WorkspaceInfo, error) {
@@ -530,15 +538,62 @@ func (s *Store) RenameWorkspace(id, name string) (WorkspaceInfo, error) {
 			return WorkspaceInfo{}, err
 		}
 		ws := s.data.Workspaces[i]
-		return WorkspaceInfo{
-			ID:        ws.ID,
-			Name:      ws.Name,
-			BookCount: len(ws.Library),
-			UpdatedAt: ws.UpdatedAt,
-			Current:   ws.ID == s.data.CurrentWorkspace,
-		}, nil
+		return workspaceInfo(ws, s.data.CurrentWorkspace), nil
 	}
 	return WorkspaceInfo{}, os.ErrNotExist
+}
+
+func (s *Store) ReorderWorkspaces(ids []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureWorkspace()
+	if len(ids) == 0 {
+		return fmt.Errorf("список пространств пуст")
+	}
+	byID := make(map[string]Workspace, len(s.data.Workspaces))
+	for _, ws := range s.data.Workspaces {
+		byID[ws.ID] = ws
+	}
+	next := make([]Workspace, 0, len(s.data.Workspaces))
+	seen := make(map[string]bool, len(ids))
+	for _, raw := range ids {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			return fmt.Errorf("пространство не найдено")
+		}
+		ws, ok := byID[id]
+		if !ok {
+			return os.ErrNotExist
+		}
+		if seen[id] {
+			return fmt.Errorf("пространство повторяется")
+		}
+		seen[id] = true
+		next = append(next, ws)
+	}
+	if len(next) != len(s.data.Workspaces) {
+		return fmt.Errorf("список пространств неполный")
+	}
+	s.data.Workspaces = next
+	return s.save()
+}
+
+func (s *Store) SetWorkspacePinned(id string, pinned bool) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return os.ErrNotExist
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureWorkspace()
+	for i := range s.data.Workspaces {
+		if s.data.Workspaces[i].ID != id {
+			continue
+		}
+		s.data.Workspaces[i].Pinned = pinned
+		return s.save()
+	}
+	return os.ErrNotExist
 }
 
 func (s *Store) SearchLibrary(q string) []LibraryHit {

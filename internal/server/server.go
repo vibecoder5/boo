@@ -82,6 +82,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/workspaces", s.handleCreateWorkspace)
 	mux.HandleFunc("PUT /api/workspaces", s.handleRenameWorkspace)
 	mux.HandleFunc("PUT /api/workspaces/current", s.handleSwitchWorkspace)
+	mux.HandleFunc("PUT /api/workspaces/order", s.handleReorderWorkspaces)
+	mux.HandleFunc("PUT /api/workspaces/pin", s.handlePinWorkspace)
 	mux.HandleFunc("POST /api/library/move", s.handleMoveBook)
 	mux.HandleFunc("POST /api/lists", s.handleCreateList)
 	mux.HandleFunc("DELETE /api/lists", s.handleDeleteList)
@@ -1107,6 +1109,41 @@ func (s *Server) handleRemoveFromList(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.RemoveFromList(id, key); err != nil {
 		http.Error(w, "книга не в списке", http.StatusNotFound)
+		return
+	}
+	s.handleState(w, r)
+}
+
+func (s *Server) handleReorderWorkspaces(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.ReorderWorkspaces(body.IDs); err != nil {
+		if err == os.ErrNotExist {
+			http.Error(w, "пространство не найдено", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.handleState(w, r)
+}
+
+func (s *Server) handlePinWorkspace(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID     string `json:"id"`
+		Pinned bool   `json:"pinned"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.ID) == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SetWorkspacePinned(body.ID, body.Pinned); err != nil {
+		http.Error(w, "пространство не найдено", http.StatusNotFound)
 		return
 	}
 	s.handleState(w, r)

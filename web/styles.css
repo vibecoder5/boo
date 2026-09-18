@@ -488,7 +488,11 @@ body.workspaces-resizing .workspaces-resizer {
 
 .workspacesbar .workspace-card {
   min-height: 76px;
-  padding: 12px 32px 12px 12px;
+  padding: 12px 56px 12px 22px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .listsbar {
@@ -1706,7 +1710,7 @@ body.dragover:not(.reading) .shelf {
   gap: 6px;
   width: 100%;
   min-height: 110px;
-  padding: 16px 32px 16px 16px;
+  padding: 16px 56px 16px 16px;
   background: var(--paper);
   border: 1px solid var(--line);
   color: inherit;
@@ -1717,8 +1721,21 @@ body.dragover:not(.reading) .shelf {
   position: relative;
 }
 
+.workspace-card .drag-handle {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: -1px;
+  line-height: 1;
+  pointer-events: none;
+}
+
 .workspace-card .remove,
-.workspace-card .rename {
+.workspace-card .rename,
+.workspace-card .pin {
   position: absolute;
   top: 6px;
   right: 6px;
@@ -1736,6 +1753,19 @@ body.dragover:not(.reading) .shelf {
   line-height: 24px;
 }
 
+.workspace-card .pin {
+  right: 30px;
+  font-size: 13px;
+  line-height: 24px;
+  opacity: 0.45;
+}
+
+.workspace-card.pinned .pin,
+.workspace-card .pin:hover {
+  opacity: 1;
+  color: var(--accent);
+}
+
 .workspace-card .remove:hover,
 .workspace-card .rename:hover {
   color: var(--ink);
@@ -1748,7 +1778,24 @@ body.dragover:not(.reading) .shelf {
 .workspace-card.current {
   border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
-  cursor: default;
+}
+
+.workspace-card.pinned {
+  background: color-mix(in srgb, var(--accent) 8%, var(--paper));
+}
+
+.workspace-card.dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+
+body.workspace-sorting {
+  cursor: grabbing;
+  user-select: none;
+}
+
+body.workspace-sorting .workspacesbar .workspace-card {
+  cursor: grabbing;
 }
 
 .workspace-card strong {

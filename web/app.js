@@ -896,6 +896,135 @@ function bookWord(n) {
   return "книг";
 }
 
+function workspaceDisplayList() {
+  const pinned = [];
+  const rest = [];
+  for (const item of state.workspaces || []) {
+    if (item.pinned) pinned.push(item);
+    else rest.push(item);
+  }
+  return pinned.concat(rest);
+}
+
+let workspaceSortDrag = null;
+let workspaceSortBound = false;
+
+function bindWorkspaceSortListeners() {
+  if (workspaceSortBound) return;
+  workspaceSortBound = true;
+  document.addEventListener("pointermove", onWorkspaceSortMove);
+  document.addEventListener("pointerup", onWorkspaceSortPointerUp);
+  document.addEventListener("pointercancel", onWorkspaceSortPointerUp);
+}
+
+function onWorkspaceSortMove(e) {
+  const drag = workspaceSortDrag;
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  if (!drag.moved && Math.abs(e.clientY - drag.startY) < 6) return;
+  e.preventDefault();
+  drag.moved = true;
+  const card = drag.card;
+  card.classList.add("dragging");
+  document.body.classList.add("workspace-sorting");
+  const grid = $("workspaceGrid");
+  if (!grid) return;
+  const pinned = card.classList.contains("pinned");
+  const others = [...grid.querySelectorAll(".workspace-card")].filter(
+    (el) => el !== card && el.classList.contains("pinned") === pinned
+  );
+  let before = null;
+  for (const other of others) {
+    const rect = other.getBoundingClientRect();
+    if (e.clientY < rect.top + rect.height / 2) {
+      before = other;
+      break;
+    }
+  }
+  if (before) {
+    grid.insertBefore(card, before);
+    return;
+  }
+  if (pinned) {
+    const firstRest = [...grid.querySelectorAll(".workspace-card")].find(
+      (el) => el !== card && !el.classList.contains("pinned")
+    );
+    if (firstRest) grid.insertBefore(card, firstRest);
+    else grid.appendChild(card);
+    return;
+  }
+  grid.appendChild(card);
+}
+
+async function onWorkspaceSortPointerUp(e) {
+  const drag = workspaceSortDrag;
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  const moved = drag.moved;
+  const item = drag.item;
+  const card = drag.card;
+  workspaceSortDrag = null;
+  card.classList.remove("dragging");
+  document.body.classList.remove("workspace-sorting");
+  try {
+    card.releasePointerCapture(drag.pointerId);
+  } catch (_) { /* already released */ }
+  if (moved) {
+    await persistWorkspaceOrder();
+    return;
+  }
+  if (e.type === "pointercancel") return;
+  if (!item.current && item.id !== (state.workspace && state.workspace.id)) {
+    switchWorkspace(item.id);
+  }
+}
+
+function bindWorkspaceSort(card, item) {
+  bindWorkspaceSortListeners();
+  card.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest("button")) return;
+    e.preventDefault();
+    workspaceSortDrag = {
+      card,
+      item,
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      moved: false,
+    };
+    try {
+      card.setPointerCapture(e.pointerId);
+    } catch (_) { /* capture is optional */ }
+  });
+  card.addEventListener("dragstart", (e) => e.preventDefault());
+}
+
+async function persistWorkspaceOrder() {
+  const grid = $("workspaceGrid");
+  if (!grid) return;
+  const ids = [...grid.querySelectorAll(".workspace-card")].map((el) => el.dataset.id).filter(Boolean);
+  const expected = workspaceDisplayList().map((item) => item.id);
+  if (ids.length === expected.length && ids.every((id, i) => id === expected[i])) return;
+  try {
+    const payload = await api("/api/workspaces/order", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+    await applyState(payload, Boolean(payload.book));
+  } catch (err) {
+    renderWorkspaces();
+    alert(err.message || "Не удалось сохранить порядок пространств");
+  }
+}
+
+async function setWorkspacePinned(id, pinned) {
+  const payload = await api("/api/workspaces/pin", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, pinned }),
+  });
+  await applyState(payload, Boolean(payload.book));
+}
+
 function renderWorkspaces() {
   const grid = $("workspaceGrid");
   const title = $("workspaceTitle");
@@ -907,20 +1036,46 @@ function renderWorkspaces() {
     shelfLabel.textContent = current.name ? `Полка · ${current.name}` : "Полка";
   }
   grid.replaceChildren();
-  for (const item of state.workspaces || []) {
-    const card = document.createElement("button");
-    card.type = "button";
+  for (const item of workspaceDisplayList()) {
+    const card = document.createElement("div");
     card.className = "workspace-card";
+    card.dataset.id = item.id || "";
+    card.setAttribute("role", "button");
+    card.tabIndex = 0;
+    card.draggable = false;
+    if (item.pinned) card.classList.add("pinned");
     if (item.current || item.id === current.id) card.classList.add("current");
+    const handle = document.createElement("span");
+    handle.className = "drag-handle";
+    handle.setAttribute("aria-hidden", "true");
+    handle.textContent = "⋮⋮";
+    card.appendChild(handle);
     const name = document.createElement("strong");
     name.textContent = item.name || "Без названия";
     const meta = document.createElement("span");
     const count = item.bookCount || 0;
-    meta.textContent = item.current || item.id === current.id
-      ? `Открыто · ${count} ${bookWord(count)}`
-      : `${count} ${bookWord(count)}`;
+    const status = [];
+    if (item.pinned) status.push("Закреплено");
+    if (item.current || item.id === current.id) status.push("Открыто");
+    status.push(`${count} ${bookWord(count)}`);
+    meta.textContent = status.join(" · ");
     card.appendChild(name);
     card.appendChild(meta);
+    const pin = document.createElement("button");
+    pin.type = "button";
+    pin.className = "pin";
+    pin.setAttribute("aria-label", item.pinned ? "Открепить пространство" : "Закрепить пространство");
+    pin.setAttribute("title", item.pinned ? "Открепить" : "Закрепить");
+    pin.textContent = "📌";
+    pin.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      try {
+        await setWorkspacePinned(item.id, !item.pinned);
+      } catch (err) {
+        alert(err.message || "Не удалось закрепить пространство");
+      }
+    });
+    card.appendChild(pin);
     const rename = document.createElement("button");
     rename.type = "button";
     rename.className = "rename";
@@ -931,9 +1086,13 @@ function renderWorkspaces() {
       setWorkspaceFormOpen(true, item.id);
     });
     card.appendChild(rename);
-    if (!item.current && item.id !== current.id) {
-      card.addEventListener("click", () => switchWorkspace(item.id));
-    }
+    bindWorkspaceSort(card, item);
+    card.addEventListener("keydown", (e) => {
+      if (e.target !== card) return;
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      if (!item.current && item.id !== current.id) switchWorkspace(item.id);
+    });
     grid.appendChild(card);
   }
 }
@@ -4173,6 +4332,12 @@ $("progressTrack").addEventListener("click", (e) => seekFromEvent(e, e.currentTa
 $("sidebarProgressTrack").addEventListener("click", (e) => seekFromEvent(e, e.currentTarget));
 
 window.addEventListener("dragover", (e) => {
+  if (workspaceSortDrag) {
+    e.preventDefault();
+    return;
+  }
+  const types = e.dataTransfer && e.dataTransfer.types;
+  if (!types || ![...types].includes("Files")) return;
   e.preventDefault();
   document.body.classList.add("dragover");
 });
@@ -4180,6 +4345,7 @@ window.addEventListener("dragleave", () => document.body.classList.remove("drago
 window.addEventListener("drop", (e) => {
   e.preventDefault();
   document.body.classList.remove("dragover");
+  if (workspaceSortDrag) return;
   const file = e.dataTransfer.files[0];
   if (file) uploadFile(file);
 });
