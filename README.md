@@ -13,6 +13,7 @@
 - Словари (DSL, XDXF, JSON, TXT/TSV) — перевод по наведению
 - История сессий, отметок и времени чтения, отмена удаления книги / закладки / заметки
 - Экспорт и импорт всей библиотеки ZIP-архивом
+- По желанию — синхронизация книг и настроек с Google Диском
 - Темы `dark` / `sepia` / `light`, отдельные шрифты для текста и интерфейса, свой фон стартового экрана
 
 ## Требования
@@ -72,6 +73,7 @@ go build -o boo.exe .
 | `covers/` | Обложки |
 | `dictionaries/` | Файлы словарей |
 | `webview/` | Профиль WebView2 (только Windows) |
+| `drive/` | Ключ и вход Google Диска (не входят в ZIP и на Диск) |
 
 Импорт архива **заменяет** текущую библиотеку, а не дополняет её.
 
@@ -85,6 +87,7 @@ internal/fb2            FB2 и FB2.zip → epub.Book
 internal/txt            TXT / MD → главы по заголовкам
 internal/server         localhost API и раздача UI
 internal/store          JSON-хранилище, undo, export/import
+internal/drive          OAuth и синк с Google Диском
 internal/dict           разбор и lookup словарей
 internal/desktop        окно WebView2 (windows) / заглушка (!windows)
 web/                    index.html, app.js, styles.css
@@ -101,7 +104,7 @@ HTTP доступен только с loopback (`withLocalhost`). Ресурсы
 - Язык интерфейса и сообщений об ошибках — русский.
 - Тесты рядом с пакетом: `*_test.go`. После изменений в парсерах, store или API гоняйте `go test ./...`.
 - Фронтенд без сборщика: правки в `web/` попадают в бинарник через `//go:embed all:web`.
-- Не добавляйте сетевые зависимости и удалённые сервисы. Приложение офлайн.
+- Офлайн по умолчанию: в Google Диск данные уходят только после явного подключения в меню «Перенос».
 - Новые поля store — с миграцией в `store.Open` / `migrateWorkspaces`, без поломки старого `state.json`.
 - Версии — SemVer, журнал — [CHANGELOG.md](CHANGELOG.md).
 

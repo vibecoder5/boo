@@ -5,14 +5,15 @@ alwaysApply: true
 
 # boo
 
-Офлайн-читалка: Go + встроенный `web/`. Данные только локально, HTTP только с 127.0.0.1. UI и ошибки — по-русски.
+Офлайн-читалка: Go + встроенный `web/`. Данные локально, HTTP только с 127.0.0.1. Google Диск — по желанию. UI и ошибки — по-русски.
 
 - Старт и флаги: `main.go` (`-port`, `-web`, `-no-open`, `-demo`).
 - Форматы → `*epub.Book`: `internal/open`, парсеры `epub` / `fb2` / `txt`.
 - API и UI: `internal/server`, статика `web/`.
-- Persist: `internal/store` → `%AppData%/boo` (`state.json`, `library/`, `covers/`, `dictionaries/`, `ui/`).
+- Persist: `internal/store` → `%AppData%/boo` (`state.json`, `library/`, `covers/`, `dictionaries/`, `ui/`, `drive/`).
 - Словари: `internal/dict`. Окно: `internal/desktop` (Windows/WebView2).
+- Синк: `internal/drive` — только после явного подключения.
 
-Инварианты: не добавлять сеть и аккаунты; HTML глав санитайзить; `/res` — только картинки и шрифты; импорт ZIP заменяет библиотеку; undo покрывает книгу / закладку / заметку, не highlight.
+Инварианты: не слушать не-loopback; HTML глав санитайзить; `/res` — только картинки и шрифты; импорт ZIP заменяет библиотеку; undo покрывает книгу / закладку / заметку, не highlight; токен Диска не класть в ZIP.
 
 Документация: `README.md`, `docs/user-guide.md`, `CHANGELOG.md`, `AGENTS.md`. Версии — SemVer в `CHANGELOG.md`. После правок store/парсеров/API — `go test ./...`.

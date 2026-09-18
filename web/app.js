@@ -52,6 +52,7 @@ const state = {
   readChapters: [],
   chapterHTML: "",
   dictionaries: [],
+  drive: {},
 };
 
 const NOTE_COLORS = ["yellow", "green", "blue", "pink", "orange"];
@@ -3598,6 +3599,7 @@ async function applyState(payload, restore) {
   if ($("searchInput")) $("searchInput").value = "";
   renderSearchResults([]);
   if (payload.ui) state.ui = payload.ui;
+  if (payload.drive) renderDrive(payload.drive);
   applyUI();
   if (bookNoteOpen() && state.bookNoteKey) {
     const still = (payload.library || []).some((item) => item.key === state.bookNoteKey);
@@ -3925,9 +3927,143 @@ function pickImportFile() {
   input.click();
 }
 
+let driveBusy = false;
+
+function driveStatusText(d) {
+  if (!d) return "";
+  if (d.lastError && !d.connected) return d.lastError;
+  if (d.connected) {
+    let msg = d.email ? `Подключено: ${d.email}.` : "Google Диск подключён.";
+    if (d.lastSync) {
+      const t = new Date(d.lastSync);
+      if (!Number.isNaN(t.getTime()) && t.getFullYear() > 2000) {
+        msg += ` Последняя синхронизация: ${t.toLocaleString("ru")}.`;
+      }
+    }
+    if (d.lastError) msg += " " + d.lastError;
+    return msg;
+  }
+  if (d.hasCredentials) {
+    return "Ключ сохранён. Нажмите «Подключить» — откроется окно входа в Google.";
+  }
+  return "Книги и настройки можно держать в папке boo на Google Диске. Сначала вставьте ключ приложения из Google Cloud, затем подключите диск. Пока не подключите, в сеть ничего не уходит.";
+}
+
+function renderDrive(d) {
+  state.drive = d || {};
+  const hint = $("driveHint");
+  if (hint) hint.textContent = driveStatusText(state.drive);
+  const creds = $("driveCreds");
+  const connectBtn = $("driveConnectBtn");
+  const syncBtn = $("driveSyncBtn");
+  const disconnectBtn = $("driveDisconnectBtn");
+  const connected = Boolean(state.drive.connected);
+  if (creds) creds.hidden = connected;
+  if (connectBtn) {
+    connectBtn.hidden = connected;
+    connectBtn.disabled = driveBusy;
+    connectBtn.textContent = driveBusy ? "Вход…" : "Подключить";
+  }
+  if (syncBtn) {
+    syncBtn.hidden = !connected;
+    syncBtn.disabled = driveBusy;
+    if (!driveBusy) syncBtn.textContent = "Синхронизировать";
+  }
+  if (disconnectBtn) {
+    disconnectBtn.hidden = !connected;
+    disconnectBtn.disabled = driveBusy;
+  }
+}
+
+async function saveDriveCredentials() {
+  try {
+    const payload = await api("/api/drive/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: $("driveClientId").value.trim(),
+        clientSecret: $("driveClientSecret").value.trim(),
+      }),
+    });
+    const secret = $("driveClientSecret");
+    if (secret) secret.value = "";
+    renderDrive(payload);
+  } catch (err) {
+    alert(err.message || "Не удалось сохранить ключ Google");
+  }
+}
+
+async function connectDrive() {
+  if (driveBusy) return;
+  driveBusy = true;
+  renderDrive(state.drive);
+  try {
+    const payload = await api("/api/drive/connect", { method: "POST" });
+    if (payload.url) window.open(payload.url, "_blank", "noopener");
+    const deadline = Date.now() + 3 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const st = await api("/api/drive");
+      renderDrive(st);
+      if (st.connected) return;
+    }
+    alert("Не дождались входа в Google. Если окно браузера открылось — завершите вход и нажмите «Подключить» снова.");
+  } catch (err) {
+    alert(err.message || "Не удалось подключить Google Диск");
+    try {
+      renderDrive(await api("/api/drive"));
+    } catch {
+      renderDrive(state.drive);
+    }
+  } finally {
+    driveBusy = false;
+    renderDrive(state.drive);
+  }
+}
+
+async function syncDrive() {
+  if (driveBusy) return;
+  const btn = $("driveSyncBtn");
+  driveBusy = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Синхронизация…";
+  }
+  try {
+    if (state.book) await saveProgress();
+    const payload = await api("/api/drive/sync", { method: "POST" });
+    await applyState(payload, Boolean(payload.book));
+  } catch (err) {
+    alert(err.message || "Не удалось синхронизировать с Google Диском");
+    try {
+      renderDrive(await api("/api/drive"));
+    } catch {
+      /* ignore */
+    }
+  } finally {
+    driveBusy = false;
+    if (btn) btn.textContent = "Синхронизировать";
+    renderDrive(state.drive);
+  }
+}
+
+async function disconnectDrive() {
+  if (!confirm("Отключить Google Диск на этом компьютере? Файлы на Диске останутся.")) return;
+  try {
+    const payload = await api("/api/drive/disconnect", { method: "POST" });
+    await applyState(payload, Boolean(payload.book));
+  } catch (err) {
+    alert(err.message || "Не удалось отключить Google Диск");
+  }
+}
+
 $("exportBtn").addEventListener("click", () => exportLibrary());
 $("importBtn").addEventListener("click", pickImportFile);
 $("importInput").addEventListener("change", (e) => importLibrary(e.target.files[0]));
+$("driveSaveCreds").addEventListener("click", saveDriveCredentials);
+$("driveConnectBtn").addEventListener("click", connectDrive);
+$("driveSyncBtn").addEventListener("click", syncDrive);
+$("driveDisconnectBtn").addEventListener("click", disconnectDrive);
 $("fileInput").addEventListener("change", (e) => uploadFile(e.target.files[0]));
 $("shelfAddBtn").addEventListener("click", onShelfAdd);
 $("listBackBtn").addEventListener("click", closeListScreen);
