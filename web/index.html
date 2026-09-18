@@ -479,6 +479,12 @@
     <p class="dict-tip-meta" id="dictTipMeta"></p>
   </div>
   <div class="progress" id="progressBar" hidden>
+    <div class="read-timer" id="readTimer" role="group" aria-label="Таймер чтения">
+      <span class="read-timer-time" id="readTimerTime">0:00</span>
+      <button class="text-btn" id="readTimerStart" type="button">Старт</button>
+      <button class="text-btn" id="readTimerPause" type="button" hidden>Пауза</button>
+      <button class="text-btn" id="readTimerStop" type="button" hidden>Стоп</button>
+    </div>
     <button class="progress-track" id="progressTrack" type="button" aria-label="Прогресс чтения">
       <i id="progressFill"></i>
     </button>

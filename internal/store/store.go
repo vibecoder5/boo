@@ -54,8 +54,9 @@ type Workspace struct {
 }
 
 const (
-	HistorySession = "session"
-	HistoryNote    = "note"
+	HistorySession  = "session"
+	HistoryNote     = "note"
+	HistoryReadTime = "read_time"
 
 	UndoDeleteBook     = "delete_book"
 	UndoDeleteBookmark = "delete_bookmark"
@@ -69,6 +70,7 @@ type HistoryEntry struct {
 	Author       string    `json:"author"`
 	Kind         string    `json:"kind"`
 	Text         string    `json:"text,omitempty"`
+	DurationSec  int       `json:"durationSec,omitempty"`
 	ChapterIndex int       `json:"chapterIndex"`
 	ChapterTitle string    `json:"chapterTitle,omitempty"`
 	ScrollRatio  float64   `json:"scrollRatio"`
@@ -916,16 +918,16 @@ func (s *Store) migrateLibrary() {
 
 func defaultUI() UI {
 	return UI{
-		Theme:        "dark",
-		FontSize:     20,
-		BookFont:     "serif",
-		BookFontSize: 20,
-		UIFont:       "system",
-		UIFontSize:   16,
-		LineHeight:   1.7,
-		MaxWidth:     38,
-		SidebarWidth: 280,
-		SidebarOpen:  true,
+		Theme:           "dark",
+		FontSize:        20,
+		BookFont:        "serif",
+		BookFontSize:    20,
+		UIFont:          "system",
+		UIFontSize:      16,
+		LineHeight:      1.7,
+		MaxWidth:        38,
+		SidebarWidth:    280,
+		SidebarOpen:     true,
 		NotesWidth:      300,
 		NotesOpen:       true,
 		HistoryWidth:    280,
@@ -1910,8 +1912,29 @@ const (
 	historyRecent      = 10
 	maxHistoryKeep     = 200
 	maxHistoryText     = 400
+	maxReadDurationSec = 24 * 60 * 60
 	sessionDedupWindow = 2 * time.Minute
 )
+
+func FormatReadDuration(sec int) string {
+	if sec < 0 {
+		sec = 0
+	}
+	h := sec / 3600
+	m := (sec % 3600) / 60
+	s := sec % 60
+	var parts []string
+	if h > 0 {
+		parts = append(parts, fmt.Sprintf("%d ч", h))
+	}
+	if m > 0 {
+		parts = append(parts, fmt.Sprintf("%d мин", m))
+	}
+	if s > 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%d с", s))
+	}
+	return strings.Join(parts, " ")
+}
 
 func historyID(e HistoryEntry) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("hist|%s|%s|%d", e.BookKey, e.Kind, time.Now().UnixNano())))
@@ -1960,12 +1983,23 @@ func (s *Store) AddHistory(e HistoryEntry) (HistoryEntry, error) {
 		return HistoryEntry{}, fmt.Errorf("книга нужна")
 	}
 	switch e.Kind {
-	case HistorySession, HistoryNote:
+	case HistorySession, HistoryNote, HistoryReadTime:
 	default:
 		if strings.TrimSpace(e.Text) != "" {
 			e.Kind = HistoryNote
 		} else {
 			e.Kind = HistorySession
+		}
+	}
+	if e.Kind == HistoryReadTime {
+		if e.DurationSec < 1 {
+			return HistoryEntry{}, fmt.Errorf("нужно время чтения")
+		}
+		if e.DurationSec > maxReadDurationSec {
+			e.DurationSec = maxReadDurationSec
+		}
+		if strings.TrimSpace(e.Text) == "" {
+			e.Text = "Чтение: " + FormatReadDuration(e.DurationSec)
 		}
 	}
 	e.Text = clipRunes(e.Text, maxHistoryText)

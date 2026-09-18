@@ -55,6 +55,15 @@ const state = {
 };
 
 const NOTE_COLORS = ["yellow", "green", "blue", "pink", "orange"];
+const MAX_READ_DURATION_SEC = 24 * 60 * 60;
+
+const readTimer = {
+  status: "idle",
+  elapsedMs: 0,
+  startedAt: 0,
+  bookKey: "",
+  tick: 0,
+};
 
 const $ = (id) => document.getElementById(id);
 
@@ -1299,7 +1308,7 @@ function fillHistoryList(list, items) {
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "history-empty";
-    empty.textContent = "Пока нет записей. Они появятся, когда вы закроете книгу или добавите отметку.";
+    empty.textContent = "Пока нет записей. Они появятся, когда вы закроете книгу, остановите таймер или добавите отметку.";
     list.appendChild(empty);
     return;
   }
@@ -1308,6 +1317,7 @@ function fillHistoryList(list, items) {
     row.type = "button";
     row.className = "history-item";
     if (item.kind === "note") row.classList.add("note");
+    if (item.kind === "read_time") row.classList.add("read-time");
     if (!historyCanOpen(item)) row.classList.add("dead");
     const when = document.createElement("span");
     when.className = "when";
@@ -1317,6 +1327,12 @@ function fillHistoryList(list, items) {
     detail.className = "detail";
     if (item.kind === "note") {
       title.textContent = item.text || "Отметка";
+      const bits = [item.title || "Книга"];
+      const progress = historyProgressText(item);
+      if (progress) bits.push(progress);
+      detail.textContent = bits.join(" · ");
+    } else if (item.kind === "read_time") {
+      title.textContent = item.text || "Чтение";
       const bits = [item.title || "Книга"];
       const progress = historyProgressText(item);
       if (progress) bits.push(progress);
@@ -1438,6 +1454,153 @@ async function restoreUndo(item, index) {
     await applyUndoPayload(payload);
   } catch (err) {
     alert(err.message || "Не удалось откатиться");
+  }
+}
+
+function readTimerElapsedMs() {
+  let ms = readTimer.elapsedMs;
+  if (readTimer.status === "running" && readTimer.startedAt) {
+    ms += Date.now() - readTimer.startedAt;
+  }
+  return Math.max(0, ms);
+}
+
+function formatTimerClock(ms) {
+  const sec = Math.floor(Math.max(0, ms) / 1000);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function stopReadTimerTick() {
+  if (readTimer.tick) {
+    window.clearInterval(readTimer.tick);
+    readTimer.tick = 0;
+  }
+}
+
+function resetReadTimer() {
+  stopReadTimerTick();
+  readTimer.status = "idle";
+  readTimer.elapsedMs = 0;
+  readTimer.startedAt = 0;
+  readTimer.bookKey = "";
+  renderReadTimer();
+}
+
+function renderReadTimer() {
+  const box = $("readTimer");
+  const time = $("readTimerTime");
+  const start = $("readTimerStart");
+  const pause = $("readTimerPause");
+  const stop = $("readTimerStop");
+  if (!box || !time || !start || !pause || !stop) return;
+  const hasBook = Boolean(state.book);
+  const status = hasBook ? readTimer.status : "idle";
+  const ms = hasBook ? readTimerElapsedMs() : 0;
+  box.hidden = !hasBook;
+  box.classList.toggle("running", status === "running");
+  box.classList.toggle("paused", status === "paused");
+  time.textContent = formatTimerClock(ms);
+  time.setAttribute("aria-label", `Время чтения ${time.textContent}`);
+  start.hidden = status === "running";
+  start.textContent = status === "paused" ? "Продолжить" : "Старт";
+  pause.hidden = status !== "running";
+  stop.hidden = status === "idle";
+}
+
+function startReadTimerTick() {
+  stopReadTimerTick();
+  readTimer.tick = window.setInterval(renderReadTimer, 250);
+}
+
+function startReadTimer() {
+  if (!state.book || !state.book.key) return;
+  if (readTimer.status === "running") return;
+  if (readTimer.status === "paused") {
+    readTimer.status = "running";
+    readTimer.startedAt = Date.now();
+  } else {
+    readTimer.status = "running";
+    readTimer.elapsedMs = 0;
+    readTimer.startedAt = Date.now();
+    readTimer.bookKey = state.book.key;
+  }
+  startReadTimerTick();
+  renderReadTimer();
+}
+
+function pauseReadTimer() {
+  if (readTimer.status !== "running") return;
+  readTimer.elapsedMs = readTimerElapsedMs();
+  readTimer.startedAt = 0;
+  readTimer.status = "paused";
+  stopReadTimerTick();
+  renderReadTimer();
+}
+
+function readTimerPayload(sec) {
+  const key = readTimer.bookKey || (state.book && state.book.key) || "";
+  const body = { key, durationSec: sec };
+  if (state.book && state.book.key === key) {
+    body.chapterIndex = state.chapterIndex;
+    body.scrollRatio = scrollRatio();
+  }
+  return body;
+}
+
+async function commitReadTimer(options) {
+  const keepOnError = Boolean(options && options.keepOnError);
+  const beacon = Boolean(options && options.beacon);
+  if (readTimer.status === "idle") return null;
+  const snapshot = {
+    status: readTimer.status,
+    elapsedMs: readTimerElapsedMs(),
+    bookKey: readTimer.bookKey,
+  };
+  let sec = Math.floor(snapshot.elapsedMs / 1000);
+  if (sec > MAX_READ_DURATION_SEC) sec = MAX_READ_DURATION_SEC;
+  const body = readTimerPayload(sec);
+  resetReadTimer();
+  if (sec < 1 || !body.key) return null;
+  if (beacon) {
+    navigator.sendBeacon("/api/history/read-time", new Blob([JSON.stringify(body)], { type: "application/json" }));
+    return null;
+  }
+  try {
+    const data = await api("/api/history/read-time", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return data.history || [];
+  } catch (err) {
+    if (keepOnError) {
+      readTimer.status = snapshot.status === "running" ? "paused" : snapshot.status;
+      readTimer.elapsedMs = snapshot.elapsedMs;
+      readTimer.bookKey = snapshot.bookKey;
+      stopReadTimerTick();
+      renderReadTimer();
+      throw err;
+    }
+    console.warn(err);
+    return null;
+  }
+}
+
+async function stopReadTimer() {
+  try {
+    const history = await commitReadTimer({ keepOnError: true });
+    if (history) {
+      state.history = history;
+      renderHistory();
+    }
+  } catch (err) {
+    alert(err.message || "Не удалось записать время чтения");
   }
 }
 
@@ -2372,6 +2535,7 @@ function showBookChrome() {
   renderBookmarks();
   renderDictionary();
   renderNotes();
+  renderReadTimer();
   if (!hasBook) {
     const listView = openedList();
     const wsName = (state.workspace && state.workspace.name) || "boo";
@@ -3190,6 +3354,12 @@ function bindContentLinks() {
 }
 
 async function applyState(payload, restore) {
+  const nextKey = (payload.book && payload.book.key) || "";
+  const curKey = (state.book && state.book.key) || "";
+  if (curKey && curKey !== nextKey) {
+    const history = await commitReadTimer();
+    if (history) payload.history = history;
+  }
   state.book = payload.book;
   state.workspace = payload.workspace || { id: "", name: "Библиотека" };
   state.workspaces = payload.workspaces || [];
@@ -3681,6 +3851,9 @@ $("closeNotes").addEventListener("click", () => setNotesOpen(false));
 $("notesRail").addEventListener("click", () => setNotesOpen(true));
 $("noteAdd").addEventListener("click", () => addNoteFromSelection("yellow"));
 $("historyBtn").addEventListener("click", () => setHistoryOpen(!state.ui.historyOpen));
+$("readTimerStart").addEventListener("click", startReadTimer);
+$("readTimerPause").addEventListener("click", pauseReadTimer);
+$("readTimerStop").addEventListener("click", () => stopReadTimer());
 $("closeHistory").addEventListener("click", () => setHistoryOpen(false));
 $("historyRail").addEventListener("click", () => setHistoryOpen(true));
 $("workspacesBtn").addEventListener("click", () => setWorkspacesOpen(!state.ui.workspacesOpen));
@@ -4235,6 +4408,9 @@ function flushOnLeave() {
   };
   navigator.sendBeacon("/api/progress", new Blob([JSON.stringify(progress)], { type: "application/json" }));
   navigator.sendBeacon("/api/history/session", new Blob([JSON.stringify(progress)], { type: "application/json" }));
+  if (readTimer.status !== "idle") {
+    commitReadTimer({ beacon: true });
+  }
 }
 
 window.addEventListener("pagehide", flushOnLeave);

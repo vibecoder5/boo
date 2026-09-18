@@ -1102,6 +1102,93 @@ func TestHistoryAPI(t *testing.T) {
 	}
 }
 
+func TestHistoryReadTimeAPI(t *testing.T) {
+	st := testStore(t)
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
+	book, err := demoBook()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	srv := New(st, fs.FS(ui), book)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	zero, err := http.Post(ts.URL+"/api/history/read-time", "application/json", strings.NewReader(`{"durationSec":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero.Body.Close()
+	if zero.StatusCode != 400 {
+		t.Fatalf("zero: %d", zero.StatusCode)
+	}
+
+	res, err := http.Post(ts.URL+"/api/history/read-time", "application/json", strings.NewReader(
+		`{"durationSec":125,"chapterIndex":1,"scrollRatio":0.5}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("read-time: %d", res.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := payload["history"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("after read-time %#v", payload)
+	}
+	item, _ := list[0].(map[string]any)
+	if item["kind"] != "read_time" || item["text"] != "Чтение: 2 мин 5 с" {
+		t.Fatalf("item %#v", item)
+	}
+	if int(item["durationSec"].(float64)) != 125 {
+		t.Fatalf("duration %#v", item)
+	}
+	if int(item["chapterIndex"].(float64)) != 1 {
+		t.Fatalf("chapter %#v", item)
+	}
+
+	closeRes, err := http.Post(ts.URL+"/api/close", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeRes.Body.Close()
+
+	missing, err := http.Post(ts.URL+"/api/history/read-time", "application/json", strings.NewReader(`{"durationSec":10}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing.Body.Close()
+	if missing.StatusCode != 400 {
+		t.Fatalf("no book: %d", missing.StatusCode)
+	}
+
+	again, err := http.Post(ts.URL+"/api/history/read-time", "application/json", strings.NewReader(
+		`{"key":"`+book.Key+`","durationSec":8}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Body.Close()
+	if again.StatusCode != 200 {
+		t.Fatalf("by key: %d", again.StatusCode)
+	}
+	if err := json.NewDecoder(again.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = payload["history"].([]any)
+	if len(list) != 3 {
+		t.Fatalf("session + two times %#v", payload)
+	}
+	if list[0].(map[string]any)["kind"] != "read_time" || list[0].(map[string]any)["text"] != "Чтение: 8 с" {
+		t.Fatalf("latest %#v", list[0])
+	}
+}
+
 func TestUndoAPI(t *testing.T) {
 	st := testStore(t)
 	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}

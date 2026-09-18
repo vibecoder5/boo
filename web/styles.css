@@ -340,7 +340,8 @@ body.history-resizing .history-resizer {
   line-height: 1.4;
 }
 
-.history-item.note strong {
+.history-item.note strong,
+.history-item.read-time strong {
   font-family: var(--sans);
   font-weight: 500;
 }
@@ -2182,7 +2183,7 @@ body.reading .reader {
   min-height: 100%;
   margin: 0;
   background: var(--paper);
-  padding: 48px max(24px, calc((100% - var(--measure)) / 2)) 88px;
+  padding: 48px max(24px, calc((100% - var(--measure)) / 2)) 120px;
   box-shadow: none;
   border: 0;
 }
@@ -2637,7 +2638,7 @@ body.reading .reader {
 }
 
 body.reading .reader {
-  padding-bottom: 44px;
+  padding-bottom: 80px;
 }
 
 .progress {
@@ -2654,6 +2655,30 @@ body.reading .reader {
   border-top: 1px solid var(--line);
 }
 
+.read-timer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 28px;
+}
+
+.read-timer-time {
+  min-width: 5.5ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.read-timer.running .read-timer-time {
+  color: var(--accent);
+}
+
+.read-timer.paused .read-timer-time {
+  color: var(--muted);
+}
+
 .progress-meta {
   margin: 0;
   text-align: center;
@@ -2662,7 +2687,7 @@ body.reading .reader {
 
 @media (max-width: 860px) {
   .page {
-    padding: 32px 22px 64px;
+    padding: 32px 22px 96px;
   }
   .topbar-title { display: none; }
 }
