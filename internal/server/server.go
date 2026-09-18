@@ -136,23 +136,25 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	payload := map[string]any{
-		"book":         s.bookPayload(book),
-		"ui":           s.store.UI(),
-		"progress":     nil,
-		"workspace":    s.store.CurrentWorkspace(),
-		"workspaces":   s.store.Workspaces(),
-		"library":      s.libraryPayload(),
-		"lists":        s.store.Lists(),
-		"bookmarks":    []store.Bookmark{},
-		"highlights":   []store.Highlight{},
-		"notes":        []store.Note{},
-		"todos":        []store.Todo{},
-		"todoBook":     nil,
-		"history":      s.store.History(10),
-		"undo":         s.store.UndoLog(),
-		"tocFold":      []string{},
-		"readChapters": []int{},
-		"dictionaries": s.store.Dictionaries(),
+		"book":          s.bookPayload(book),
+		"ui":            s.store.UI(),
+		"progress":      nil,
+		"workspace":     s.store.CurrentWorkspace(),
+		"workspaces":    s.store.Workspaces(),
+		"library":       s.libraryPayload(),
+		"lists":         s.store.Lists(),
+		"bookmarks":     []store.Bookmark{},
+		"highlights":    []store.Highlight{},
+		"notes":         []store.Note{},
+		"todos":         []store.Todo{},
+		"todoBook":      nil,
+		"history":       s.store.History(10),
+		"undo":          s.store.UndoLog(),
+		"readStats":     s.store.ReadStats(""),
+		"bookReadStats": nil,
+		"tocFold":       []string{},
+		"readChapters":  []int{},
+		"dictionaries":  s.store.Dictionaries(),
 	}
 	if s.drive != nil {
 		payload["drive"] = s.drive.Status()
@@ -166,6 +168,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		payload["notes"] = s.store.Notes(book.Key)
 		payload["tocFold"] = s.store.TOCFold(book.Key)
 		payload["readChapters"] = s.store.ReadChapters(book.Key)
+		payload["bookReadStats"] = s.store.ReadStats(book.Key)
 	}
 	todoBook, todos := s.todoState(book)
 	payload["todoBook"] = todoBook
@@ -326,7 +329,15 @@ func (s *Server) handleDeleteTodo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeHistory(w http.ResponseWriter) {
-	writeJSON(w, map[string]any{"history": s.store.History(10)})
+	payload := map[string]any{
+		"history":       s.store.History(10),
+		"readStats":     s.store.ReadStats(""),
+		"bookReadStats": nil,
+	}
+	if book := s.current(); book != nil {
+		payload["bookReadStats"] = s.store.ReadStats(book.Key)
+	}
+	writeJSON(w, payload)
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {

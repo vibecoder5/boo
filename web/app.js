@@ -33,6 +33,8 @@ const state = {
   ui: { theme: "dark", fontSize: 20, bookFont: "serif", bookFontSize: 20, uiFont: "system", uiFontSize: 16, lineHeight: 1.7, maxWidth: 38, sidebarWidth: 280, sidebarOpen: true, notesWidth: 300, notesOpen: true, historyWidth: 280, historyOpen: false, workspacesWidth: 280, workspacesOpen: true, listsWidth: 280, listsOpen: true, welcomeBackground: "" },
   history: [],
   undo: [],
+  readStats: { todaySec: 0, weekSec: 0, monthSec: 0, totalSec: 0, today: "0 с", week: "0 с", month: "0 с", total: "0 с" },
+  bookReadStats: null,
   chapterIndex: 0,
   saving: false,
   query: "",
@@ -1573,6 +1575,69 @@ function renderHistory() {
   if (welcomeForm) welcomeForm.hidden = !historyBookKey() || Boolean(state.book);
 }
 
+const READ_STAT_PERIODS = [
+  ["today", "Сегодня"],
+  ["week", "Неделя"],
+  ["month", "Месяц"],
+  ["total", "Всего"],
+];
+
+function emptyReadStats() {
+  return { todaySec: 0, weekSec: 0, monthSec: 0, totalSec: 0, today: "0 с", week: "0 с", month: "0 с", total: "0 с" };
+}
+
+function fillReadStats(grid, stats) {
+  if (!grid) return;
+  const data = stats || emptyReadStats();
+  grid.replaceChildren();
+  for (const [key, label] of READ_STAT_PERIODS) {
+    const cell = document.createElement("div");
+    cell.className = "read-stat";
+    const name = document.createElement("span");
+    name.className = "label";
+    name.textContent = label;
+    const value = document.createElement("strong");
+    value.className = "value";
+    value.textContent = data[key] || "0 с";
+    cell.appendChild(name);
+    cell.appendChild(value);
+    grid.appendChild(cell);
+  }
+}
+
+function renderReadStats() {
+  fillReadStats($("welcomeReadStatsGrid"), state.readStats);
+  fillReadStats($("bookReadStatsGrid"), state.bookReadStats || emptyReadStats());
+  const title = $("readStatsDlgTitle");
+  if (title) title.textContent = (state.book && (state.book.title || "").trim()) || "Эта книга";
+}
+
+function applyReadStats(payload) {
+  if (!payload) return;
+  if (payload.readStats) state.readStats = payload.readStats;
+  if (Object.prototype.hasOwnProperty.call(payload, "bookReadStats")) {
+    state.bookReadStats = payload.bookReadStats || null;
+  }
+  renderReadStats();
+}
+
+function readStatsDlgOpen() {
+  const dlg = $("readStatsDlg");
+  return Boolean(dlg && !dlg.hidden);
+}
+
+function openReadStatsDlg() {
+  if (!state.book) return;
+  renderReadStats();
+  const dlg = $("readStatsDlg");
+  if (dlg) dlg.hidden = false;
+}
+
+function closeReadStatsDlg() {
+  const dlg = $("readStatsDlg");
+  if (dlg) dlg.hidden = true;
+}
+
 function undoDetail(item) {
   const title = (item.detail || "").trim();
   const book = (item.bookTitle || "").trim();
@@ -1786,7 +1851,8 @@ async function commitReadTimer(options) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    return data.history || [];
+    applyReadStats(data);
+    return data;
   } catch (err) {
     if (keepOnError) {
       readTimer.status = snapshot.status === "running" ? "paused" : snapshot.status;
@@ -1803,9 +1869,9 @@ async function commitReadTimer(options) {
 
 async function stopReadTimer() {
   try {
-    const history = await commitReadTimer({ keepOnError: true });
-    if (history) {
-      state.history = history;
+    const data = await commitReadTimer({ keepOnError: true });
+    if (data && data.history) {
+      state.history = data.history;
       renderHistory();
     }
   } catch (err) {
@@ -2729,7 +2795,9 @@ function showBookChrome() {
   $("sidebarProgress").hidden = !hasBook;
   $("notesBtn").hidden = !hasBook;
   $("historyBtn").hidden = !hasBook;
+  $("readStatsBtn").hidden = !hasBook;
   $("shelfBtn").hidden = !hasBook;
+  if (!hasBook) closeReadStatsDlg();
   applySidebar();
   applyNotes();
   applyHistory();
@@ -2740,6 +2808,7 @@ function showBookChrome() {
   renderLibrary();
   renderWelcomeTodos();
   renderHistory();
+  renderReadStats();
   renderUndo();
   renderBookmarks();
   renderDictionary();
@@ -3566,8 +3635,11 @@ async function applyState(payload, restore) {
   const nextKey = (payload.book && payload.book.key) || "";
   const curKey = (state.book && state.book.key) || "";
   if (curKey && curKey !== nextKey) {
-    const history = await commitReadTimer();
-    if (history) payload.history = history;
+    const committed = await commitReadTimer();
+    if (committed) {
+      if (committed.history) payload.history = committed.history;
+      if (committed.readStats) payload.readStats = committed.readStats;
+    }
   }
   state.book = payload.book;
   state.workspace = payload.workspace || { id: "", name: "Библиотека" };
@@ -3582,6 +3654,7 @@ async function applyState(payload, restore) {
   state.todoBook = payload.todoBook || null;
   state.history = payload.history || [];
   state.undo = payload.undo || [];
+  applyReadStats(payload);
   if (todoDlgOpen()) {
     const dlgKey = state.todoDlgKey;
     const still = dlgKey && (payload.library || []).some((item) => item.key === dlgKey);
@@ -4195,9 +4268,13 @@ $("closeNotes").addEventListener("click", () => setNotesOpen(false));
 $("notesRail").addEventListener("click", () => setNotesOpen(true));
 $("noteAdd").addEventListener("click", () => addNoteFromSelection("yellow"));
 $("historyBtn").addEventListener("click", () => setHistoryOpen(!state.ui.historyOpen));
+$("readStatsBtn").addEventListener("click", openReadStatsDlg);
 $("readTimerStart").addEventListener("click", startReadTimer);
 $("readTimerPause").addEventListener("click", pauseReadTimer);
 $("readTimerStop").addEventListener("click", () => stopReadTimer());
+$("readTimerStats").addEventListener("click", openReadStatsDlg);
+$("readStatsClose").addEventListener("click", closeReadStatsDlg);
+$("readStatsBackdrop").addEventListener("click", closeReadStatsDlg);
 $("closeHistory").addEventListener("click", () => setHistoryOpen(false));
 $("historyRail").addEventListener("click", () => setHistoryOpen(true));
 $("workspacesBtn").addEventListener("click", () => setWorkspacesOpen(!state.ui.workspacesOpen));
@@ -4560,6 +4637,11 @@ window.addEventListener("keydown", (e) => {
     }
     if (todoDlgOpen()) {
       closeTodoDlg();
+      e.preventDefault();
+      return;
+    }
+    if (readStatsDlgOpen()) {
+      closeReadStatsDlg();
       e.preventDefault();
       return;
     }

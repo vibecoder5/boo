@@ -1246,6 +1246,10 @@ func TestHistoryReadTimeAPI(t *testing.T) {
 	if int(item["chapterIndex"].(float64)) != 1 {
 		t.Fatalf("chapter %#v", item)
 	}
+	bookStats, _ := payload["bookReadStats"].(map[string]any)
+	if bookStats == nil || int(bookStats["totalSec"].(float64)) != 125 || bookStats["today"] != "2 мин 5 с" {
+		t.Fatalf("bookReadStats %#v", payload["bookReadStats"])
+	}
 
 	closeRes, err := http.Post(ts.URL+"/api/close", "application/json", strings.NewReader(`{}`))
 	if err != nil {
@@ -1281,6 +1285,27 @@ func TestHistoryReadTimeAPI(t *testing.T) {
 	}
 	if list[0].(map[string]any)["kind"] != "read_time" || list[0].(map[string]any)["text"] != "Чтение: 8 с" {
 		t.Fatalf("latest %#v", list[0])
+	}
+	stats, _ := payload["readStats"].(map[string]any)
+	if stats == nil || int(stats["totalSec"].(float64)) != 133 || stats["total"] != "2 мин 13 с" {
+		t.Fatalf("readStats %#v", payload["readStats"])
+	}
+	if payload["bookReadStats"] != nil {
+		t.Fatalf("closed book still has bookReadStats %#v", payload["bookReadStats"])
+	}
+
+	stateRes, err := http.Get(ts.URL + "/api/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateRes.Body.Close()
+	var state map[string]any
+	if err := json.NewDecoder(stateRes.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := state["readStats"].(map[string]any)
+	if all == nil || int(all["todaySec"].(float64)) != 133 {
+		t.Fatalf("state readStats %#v", state["readStats"])
 	}
 }
 

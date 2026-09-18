@@ -186,6 +186,7 @@
           <button class="text-btn" id="themeBtn" type="button">Тема</button>
           <button class="text-btn" id="notesBtn" type="button" hidden>Заметки</button>
           <button class="text-btn" id="historyBtn" type="button" hidden>История</button>
+          <button class="text-btn" id="readStatsBtn" type="button" hidden>Статистика</button>
           <button class="text-btn" id="bookmarkBtn" type="button">Закладка</button>
           <button class="text-btn" id="guideBtn" type="button">Руководство</button>
           <label class="text-btn file-btn">
@@ -212,6 +213,16 @@
 
       <section class="welcome" id="welcome">
         <div class="welcome-split">
+          <section class="workspaces stats-box" id="welcomeReadStats">
+            <div class="workspaces-head">
+              <div>
+                <p class="eyebrow">Статистика чтения</p>
+                <h2 class="workspaces-title">По всем книгам</h2>
+              </div>
+            </div>
+            <p class="stats-hint">Сумма остановок таймера. Текущий отсчёт не входит.</p>
+            <div class="read-stats" id="welcomeReadStatsGrid"></div>
+          </section>
           <section class="workspaces todo-box" id="todoBox" hidden>
             <div class="workspaces-head">
               <div>
@@ -481,6 +492,20 @@
       <p class="book-note-hint" id="dlgNoteHint">Сохраняется само</p>
     </div>
   </div>
+  <div class="dlg" id="readStatsDlg" hidden>
+    <div class="dlg-backdrop" id="readStatsBackdrop"></div>
+    <div class="dlg-card read-stats-dlg" role="dialog" aria-modal="true" aria-labelledby="readStatsDlgTitle">
+      <div class="dlg-head">
+        <div>
+          <p class="eyebrow">Статистика чтения</p>
+          <h2 id="readStatsDlgTitle">Эта книга</h2>
+        </div>
+        <button class="icon-btn" id="readStatsClose" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <p class="stats-hint">Сумма остановок таймера по этой книге. Текущий отсчёт не входит.</p>
+      <div class="read-stats" id="bookReadStatsGrid"></div>
+    </div>
+  </div>
   <div class="dlg" id="todoDlg" hidden>
     <div class="dlg-backdrop" id="todoBackdrop"></div>
     <div class="dlg-card todo-dlg" role="dialog" aria-modal="true" aria-labelledby="todoDlgTitle">
@@ -514,6 +539,7 @@
       <button class="text-btn" id="readTimerStart" type="button">Старт</button>
       <button class="text-btn" id="readTimerPause" type="button" hidden>Пауза</button>
       <button class="text-btn" id="readTimerStop" type="button" hidden>Стоп</button>
+      <button class="text-btn" id="readTimerStats" type="button">Статистика</button>
     </div>
     <button class="progress-track" id="progressTrack" type="button" aria-label="Прогресс чтения">
       <i id="progressFill"></i>

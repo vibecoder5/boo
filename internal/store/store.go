@@ -80,6 +80,19 @@ type HistoryEntry struct {
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
+// ReadStats — сумма durationSec записей таймера (kind=read_time).
+// Неделя — с понедельника, месяц — с 1-го числа, в локальной зоне.
+type ReadStats struct {
+	TodaySec int    `json:"todaySec"`
+	WeekSec  int    `json:"weekSec"`
+	MonthSec int    `json:"monthSec"`
+	TotalSec int    `json:"totalSec"`
+	Today    string `json:"today"`
+	Week     string `json:"week"`
+	Month    string `json:"month"`
+	Total    string `json:"total"`
+}
+
 type UndoAction struct {
 	ID        string        `json:"id"`
 	Kind      string        `json:"kind"`
@@ -2091,6 +2104,106 @@ func FormatReadDuration(sec int) string {
 	return strings.Join(parts, " ")
 }
 
+func EmptyReadStats() ReadStats {
+	return formatReadStats(0, 0, 0, 0)
+}
+
+func formatReadStats(today, week, month, total int) ReadStats {
+	return ReadStats{
+		TodaySec: today,
+		WeekSec:  week,
+		MonthSec: month,
+		TotalSec: total,
+		Today:    FormatReadDuration(today),
+		Week:     FormatReadDuration(week),
+		Month:    FormatReadDuration(month),
+		Total:    FormatReadDuration(total),
+	}
+}
+
+func startOfLocalDay(t time.Time) time.Time {
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+}
+
+func startOfLocalWeek(t time.Time) time.Time {
+	day := startOfLocalDay(t)
+	wd := int(day.Weekday())
+	if wd == 0 {
+		wd = 7
+	}
+	return day.AddDate(0, 0, 1-wd)
+}
+
+func startOfLocalMonth(t time.Time) time.Time {
+	y, m, _ := t.Date()
+	return time.Date(y, m, 1, 0, 0, 0, 0, t.Location())
+}
+
+func SummarizeReadStats(entries []HistoryEntry, bookKey string, now time.Time) ReadStats {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	day := startOfLocalDay(now)
+	week := startOfLocalWeek(now)
+	month := startOfLocalMonth(now)
+	bookKey = strings.TrimSpace(bookKey)
+	todaySec, weekSec, monthSec, totalSec := 0, 0, 0, 0
+	for _, e := range entries {
+		if e.Kind != HistoryReadTime || e.DurationSec < 1 {
+			continue
+		}
+		if bookKey != "" && e.BookKey != bookKey {
+			continue
+		}
+		sec := e.DurationSec
+		if sec > maxReadDurationSec {
+			sec = maxReadDurationSec
+		}
+		at := e.CreatedAt.In(now.Location())
+		totalSec += sec
+		if !at.Before(month) {
+			monthSec += sec
+		}
+		if !at.Before(week) {
+			weekSec += sec
+		}
+		if !at.Before(day) {
+			todaySec += sec
+		}
+	}
+	return formatReadStats(todaySec, weekSec, monthSec, totalSec)
+}
+
+func (s *Store) ReadStats(bookKey string) ReadStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return SummarizeReadStats(s.ws().History, bookKey, time.Now())
+}
+
+func trimHistory(src []HistoryEntry, max int) []HistoryEntry {
+	if max <= 0 || len(src) <= max {
+		return src
+	}
+	drop := len(src) - max
+	skip := make([]bool, len(src))
+	for i := len(src) - 1; i >= 0 && drop > 0; i-- {
+		if src[i].Kind == HistoryReadTime {
+			continue
+		}
+		skip[i] = true
+		drop--
+	}
+	out := make([]HistoryEntry, 0, len(src))
+	for i, e := range src {
+		if skip[i] {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 func historyID(e HistoryEntry) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("hist|%s|%s|%d", e.BookKey, e.Kind, time.Now().UnixNano())))
 	return hex.EncodeToString(sum[:10])
@@ -2196,7 +2309,7 @@ func (s *Store) AddHistory(e HistoryEntry) (HistoryEntry, error) {
 	e.CreatedAt = now
 	ws.History = append([]HistoryEntry{e}, ws.History...)
 	if len(ws.History) > maxHistoryKeep {
-		ws.History = ws.History[:maxHistoryKeep]
+		ws.History = trimHistory(ws.History, maxHistoryKeep)
 	}
 	ws.UpdatedAt = now
 	return e, s.save()
