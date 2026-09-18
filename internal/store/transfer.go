@@ -162,6 +162,12 @@ func (s *Store) importZip(zr *zip.Reader) error {
 				return fmt.Errorf("архив повреждён")
 			}
 			copies = append(copies, pending{dir: "dictionaries", name: base, file: f})
+		case strings.HasPrefix(name, "ui/"):
+			base, ok := safeBase(strings.TrimPrefix(name, "ui/"))
+			if !ok {
+				return fmt.Errorf("архив повреждён")
+			}
+			copies = append(copies, pending{dir: "ui", name: base, file: f})
 		}
 	}
 	if len(stateRaw) == 0 {
@@ -188,6 +194,7 @@ func (s *Store) importZip(zr *zip.Reader) error {
 		"library":      {},
 		"covers":       {},
 		"dictionaries": {},
+		"ui":           {},
 	}
 	for _, item := range copies {
 		dir := filepath.Join(s.dir, item.dir)
@@ -256,6 +263,10 @@ func (s *Store) collectTransferLocked() ([]transferFile, map[string]string) {
 	for _, d := range s.data.Dictionaries {
 		src := s.dictionaryPathLocked(d)
 		add(src, path.Join("dictionaries", filepath.Base(src)))
+	}
+	if name := s.data.UI.WelcomeBackground; name != "" {
+		src := filepath.Join(s.dir, "ui", filepath.Base(name))
+		add(src, path.Join("ui", filepath.Base(name)))
 	}
 	return files, books
 }

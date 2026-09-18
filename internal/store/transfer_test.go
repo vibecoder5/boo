@@ -60,6 +60,10 @@ func TestExportImport(t *testing.T) {
 	if err := src.SetUI(UI{Theme: "sepia", FontSize: 22, LineHeight: 1.8, MaxWidth: 42, SidebarWidth: 300, SidebarOpen: true, NotesWidth: 280, NotesOpen: true, HistoryWidth: 260}); err != nil {
 		t.Fatal(err)
 	}
+	bgName, err := src.SaveWelcomeBackground(tinyPNG)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var buf bytes.Buffer
 	if err := src.Export(&buf); err != nil {
@@ -134,6 +138,16 @@ func TestExportImport(t *testing.T) {
 	ui := dst.UI()
 	if ui.Theme != "sepia" || ui.FontSize != 22 || ui.BookFontSize != 22 || ui.BookFont != "serif" || ui.UIFont != "system" || ui.UIFontSize != 16 {
 		t.Fatalf("ui %#v", ui)
+	}
+	if ui.WelcomeBackground != bgName {
+		t.Fatalf("background name %#v", ui.WelcomeBackground)
+	}
+	bgPath, err := dst.WelcomeBackgroundFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(bgPath); err != nil || !bytes.Equal(got, tinyPNG) {
+		t.Fatalf("background file %s %v", got, err)
 	}
 	if _, ok := dst.Entry("id:old"); ok {
 		t.Fatal("old book should be replaced")

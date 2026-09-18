@@ -22,7 +22,7 @@
               <button class="text-btn" id="importBtn" type="button">Импорт</button>
             </div>
           </div>
-          <p class="transfer-hint">Архив включает книги, обложки, словари, прогресс, закладки, заметки, списки и настройки. Импорт заменит текущую библиотеку.</p>
+          <p class="transfer-hint">Архив включает книги, обложки, словари, фон экрана, прогресс, закладки, заметки, списки и настройки. Импорт заменит текущую библиотеку.</p>
           <input id="importInput" type="file" accept=".zip,application/zip" hidden>
         </section>
         <section class="sidebar-panel" id="fontsBox">
@@ -53,6 +53,20 @@
                 <span class="pref-value" id="uiFontValue"></span>
               </div>
               <p class="font-preview ui">Полка, меню, кнопки и подписи.</p>
+            </div>
+            <div class="font-pref">
+              <p class="eyebrow">Фон стартового экрана</p>
+              <div class="welcome-bg-preview" id="welcomeBgPreview" hidden>
+                <img id="welcomeBgThumb" alt="Текущий фон">
+              </div>
+              <p class="font-preview ui" id="welcomeBgHint">Картинка закрывает полку и блоки под ней. В читалке фон не показывается.</p>
+              <div class="pref-row">
+                <label class="text-btn file-btn">
+                  Выбрать
+                  <input id="welcomeBgInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif" hidden>
+                </label>
+                <button class="text-btn" id="welcomeBgClear" type="button" hidden>Убрать</button>
+              </div>
             </div>
           </div>
         </section>
