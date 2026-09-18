@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -409,6 +410,108 @@ func TestHistory(t *testing.T) {
 	}
 	if n := len(st.History(10)); n != 2 {
 		t.Fatalf("back %#v", st.History(10))
+	}
+}
+
+func TestSummarizeReadStats(t *testing.T) {
+	loc := time.FixedZone("MSK", 3*3600)
+	now := time.Date(2026, 9, 18, 15, 30, 0, 0, loc) // пятница
+	entry := func(key string, kind string, sec int, at time.Time) HistoryEntry {
+		return HistoryEntry{BookKey: key, Kind: kind, DurationSec: sec, CreatedAt: at}
+	}
+	entries := []HistoryEntry{
+		entry("id:1", HistoryReadTime, 10, time.Date(2026, 9, 18, 10, 0, 0, 0, loc)),  // сегодня
+		entry("id:1", HistoryReadTime, 20, time.Date(2026, 9, 17, 23, 0, 0, 0, loc)),  // вчера, эта неделя
+		entry("id:1", HistoryReadTime, 40, time.Date(2026, 9, 14, 0, 0, 0, 0, loc)),   // понедельник
+		entry("id:1", HistoryReadTime, 80, time.Date(2026, 9, 13, 23, 59, 0, 0, loc)), // воскресенье, ещё сентябрь
+		entry("id:1", HistoryReadTime, 160, time.Date(2026, 8, 18, 12, 0, 0, 0, loc)), // прошлый месяц
+		entry("id:2", HistoryReadTime, 1000, time.Date(2026, 9, 18, 11, 0, 0, 0, loc)),
+		entry("id:1", HistoryNote, 999, time.Date(2026, 9, 18, 12, 0, 0, 0, loc)),
+		entry("id:1", HistorySession, 0, time.Date(2026, 9, 18, 12, 0, 0, 0, loc)),
+		entry("id:1", HistoryReadTime, 0, time.Date(2026, 9, 18, 12, 0, 0, 0, loc)),
+	}
+	all := SummarizeReadStats(entries, "", now)
+	if all.TodaySec != 1010 || all.WeekSec != 1070 || all.MonthSec != 1150 || all.TotalSec != 1310 {
+		t.Fatalf("all %#v", all)
+	}
+	if all.Today != "16 мин 50 с" || all.Week != "17 мин 50 с" || all.Month != "19 мин 10 с" || all.Total != "21 мин 50 с" {
+		t.Fatalf("labels %#v", all)
+	}
+	book := SummarizeReadStats(entries, "id:1", now)
+	if book.TodaySec != 10 || book.WeekSec != 70 || book.MonthSec != 150 || book.TotalSec != 310 {
+		t.Fatalf("book %#v", book)
+	}
+	empty := SummarizeReadStats(nil, "", now)
+	if empty.TodaySec != 0 || empty.Today != "0 с" {
+		t.Fatalf("empty %#v", empty)
+	}
+}
+
+func TestReadStatsFromHistory(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(Entry{Key: "id:1", Title: "Одна"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(Entry{Key: "id:2", Title: "Другая"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddHistory(HistoryEntry{BookKey: "id:1", Kind: HistoryReadTime, DurationSec: 12}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddHistory(HistoryEntry{BookKey: "id:2", Kind: HistoryReadTime, DurationSec: 8}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddHistory(HistoryEntry{BookKey: "id:1", Kind: HistoryNote, Text: "мысль"}); err != nil {
+		t.Fatal(err)
+	}
+	all := st.ReadStats("")
+	if all.TodaySec != 20 || all.WeekSec != 20 || all.MonthSec != 20 || all.TotalSec != 20 {
+		t.Fatalf("all %#v", all)
+	}
+	one := st.ReadStats("id:1")
+	if one.TotalSec != 12 || one.Today != "12 с" {
+		t.Fatalf("one %#v", one)
+	}
+}
+
+func TestTrimHistoryKeepsReadTime(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(Entry{Key: "id:1", Title: "Книга"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddHistory(HistoryEntry{BookKey: "id:1", Kind: HistoryReadTime, DurationSec: 7}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxHistoryKeep; i++ {
+		if _, err := st.AddHistory(HistoryEntry{BookKey: "id:1", Kind: HistoryNote, Text: fmt.Sprintf("отметка %d", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := st.History(maxHistoryKeep + 10)
+	found := false
+	for _, e := range list {
+		if e.Kind == HistoryReadTime && e.DurationSec == 7 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("read time dropped: %d entries", len(list))
+	}
+	if got := st.ReadStats("id:1").TotalSec; got != 7 {
+		t.Fatalf("stats %d", got)
 	}
 }
 
