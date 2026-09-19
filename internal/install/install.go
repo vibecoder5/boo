@@ -8,7 +8,7 @@ import (
 )
 
 // Version попадает в «Программы и компоненты». Канон номера — CHANGELOG.md.
-var Version = "0.9.0"
+var Version = "0.9.1"
 
 // Options — что поставить и куда.
 type Options struct {

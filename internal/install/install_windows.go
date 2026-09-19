@@ -5,9 +5,10 @@ package install
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -329,25 +330,124 @@ func defaultDesktopDir() string {
 	return filepath.Join(home, "Desktop")
 }
 
+var (
+	ole32DLL             = windows.NewLazySystemDLL("ole32.dll")
+	procCoInitializeEx   = ole32DLL.NewProc("CoInitializeEx")
+	procCoUninitialize   = ole32DLL.NewProc("CoUninitialize")
+	procCoCreateInstance = ole32DLL.NewProc("CoCreateInstance")
+	clsidShellLink       = windows.GUID{Data1: 0x00021401, Data4: [8]byte{0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}}
+	iidIShellLinkW       = windows.GUID{Data1: 0x000214F9, Data4: [8]byte{0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}}
+	iidIPersistFile      = windows.GUID{Data1: 0x0000010B, Data4: [8]byte{0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}}
+)
+
+const (
+	coinitApartment    = 0x2
+	clsctxInprocServer = 0x1
+	rpcEChangedMode    = 0x80010106
+	shcneAssocChanged  = 0x08000000
+	shcnfFlushNoWait   = 0x2000
+)
+
 func createShortcut(lnk, target, args, workdir, desc string) error {
-	script := fmt.Sprintf(
-		"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut(%s); $s.TargetPath = %s; $s.Arguments = %s; $s.WorkingDirectory = %s; $s.Description = %s; $s.IconLocation = %s; $s.Save()",
-		psQuote(lnk), psQuote(target), psQuote(args), psQuote(workdir), psQuote(desc), psQuote(target+",0"),
-	)
-	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
-	out, err := cmd.CombinedOutput()
+	uninit, err := coInit()
 	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("ярлык: %w", err)
+	}
+	if uninit {
+		defer procCoUninitialize.Call()
+	}
+
+	var psl uintptr
+	hr, _, _ := procCoCreateInstance.Call(
+		uintptr(unsafe.Pointer(&clsidShellLink)),
+		0,
+		clsctxInprocServer,
+		uintptr(unsafe.Pointer(&iidIShellLinkW)),
+		uintptr(unsafe.Pointer(&psl)),
+	)
+	if err := hresult(hr); err != nil || psl == 0 {
+		return fmt.Errorf("ярлык: %v", err)
+	}
+	defer comRelease(psl)
+
+	if err := comSetString(psl, 20, target); err != nil {
+		return fmt.Errorf("ярлык: путь: %w", err)
+	}
+	if err := comSetString(psl, 11, args); err != nil {
+		return fmt.Errorf("ярлык: аргументы: %w", err)
+	}
+	if err := comSetString(psl, 9, workdir); err != nil {
+		return fmt.Errorf("ярлык: каталог: %w", err)
+	}
+	if err := comSetString(psl, 7, desc); err != nil {
+		return fmt.Errorf("ярлык: описание: %w", err)
+	}
+	icon, err := windows.UTF16PtrFromString(target)
+	if err != nil {
+		return fmt.Errorf("ярлык: %w", err)
+	}
+	if err := hresult(comCall(psl, 17, uintptr(unsafe.Pointer(icon)), 0)); err != nil {
+		return fmt.Errorf("ярлык: значок: %w", err)
+	}
+
+	var ppf uintptr
+	if err := hresult(comCall(psl, 0, uintptr(unsafe.Pointer(&iidIPersistFile)), uintptr(unsafe.Pointer(&ppf)))); err != nil || ppf == 0 {
+		return fmt.Errorf("ярлык: IPersistFile: %v", err)
+	}
+	defer comRelease(ppf)
+
+	path, err := windows.UTF16PtrFromString(lnk)
+	if err != nil {
+		return fmt.Errorf("ярлык: %w", err)
+	}
+	if err := hresult(comCall(ppf, 6, uintptr(unsafe.Pointer(path)), 1)); err != nil {
+		return fmt.Errorf("не удалось сохранить ярлык: %w", err)
 	}
 	return nil
 }
 
-func psQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+func coInit() (uninit bool, err error) {
+	hr, _, _ := procCoInitializeEx.Call(0, coinitApartment)
+	if hr == 0 {
+		return true, nil
+	}
+	if hr == 1 || uint32(hr) == rpcEChangedMode {
+		return false, nil
+	}
+	return false, fmt.Errorf("COM 0x%08X", uint32(hr))
+}
+
+func comCall(obj uintptr, idx int, args ...uintptr) uintptr {
+	vtbl := *(**[32]uintptr)(unsafe.Pointer(obj))
+	all := append([]uintptr{obj}, args...)
+	hr, _, _ := syscall.SyscallN(vtbl[idx], all...)
+	return hr
+}
+
+func comSetString(obj uintptr, idx int, s string) error {
+	p, err := windows.UTF16PtrFromString(s)
+	if err != nil {
+		return err
+	}
+	return hresult(comCall(obj, idx, uintptr(unsafe.Pointer(p))))
+}
+
+func comRelease(obj uintptr) {
+	if obj == 0 {
+		return
+	}
+	_ = comCall(obj, 2)
+}
+
+func hresult(hr uintptr) error {
+	if int32(hr) < 0 {
+		return fmt.Errorf("0x%08X", uint32(hr))
+	}
+	return nil
 }
 
 func notifyAssocChanged() {
-	const shcneAssocChanged = 0x08000000
+	// SHCNF_FLUSHNOWAIT: не ждать ответа окон — иначе вызов из оконной процедуры зависает.
 	shell32 := windows.NewLazySystemDLL("shell32.dll")
-	_, _, _ = shell32.NewProc("SHChangeNotify").Call(shcneAssocChanged, 0, 0, 0)
+	_, _, _ = shell32.NewProc("SHChangeNotify").Call(shcneAssocChanged, shcnfFlushNoWait, 0, 0)
 }

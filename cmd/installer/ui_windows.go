@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"sync"
 	"unsafe"
 
 	"boo/internal/install"
@@ -50,6 +51,9 @@ const (
 	idcOK     = 106
 	idcCancel = 107
 	idcWeb    = 108
+
+	wmApp         = 0x8000
+	wmInstallDone = wmApp + 1
 )
 
 var (
@@ -66,6 +70,7 @@ var (
 	procTranslateMessage    = user32.NewProc("TranslateMessage")
 	procDispatchMessage     = user32.NewProc("DispatchMessageW")
 	procPostQuitMessage     = user32.NewProc("PostQuitMessage")
+	procPostMessage         = user32.NewProc("PostMessageW")
 	procDestroyWindow       = user32.NewProc("DestroyWindow")
 	procShowWindow          = user32.NewProc("ShowWindow")
 	procUpdateWindow        = user32.NewProc("UpdateWindow")
@@ -87,11 +92,13 @@ var (
 )
 
 type uiState struct {
-	opt       install.Options
-	hwnd      uintptr
-	cancelled bool
-	err       error
-	res       install.Result
+	opt        install.Options
+	hwnd       uintptr
+	cancelled  bool
+	installing bool
+	mu         sync.Mutex
+	err        error
+	res        install.Result
 }
 
 var ui *uiState
@@ -250,11 +257,20 @@ func wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 		case idcOK:
 			doInstall(hwnd)
 		case idcCancel:
+			if ui.installing {
+				return 0
+			}
 			ui.cancelled = true
 			_, _, _ = procDestroyWindow.Call(hwnd)
 		}
 		return 0
+	case wmInstallDone:
+		finishInstall(hwnd)
+		return 0
 	case wmClose:
+		if ui.installing {
+			return 0
+		}
 		ui.cancelled = true
 		_, _, _ = procDestroyWindow.Call(hwnd)
 		return 0
@@ -267,24 +283,53 @@ func wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 }
 
 func doInstall(hwnd uintptr) {
-	_, _, _ = procEnableWindow.Call(child(hwnd, idcOK), 0)
+	if ui.installing {
+		return
+	}
+	ui.installing = true
+	setBusy(hwnd, true)
+	_, _, _ = procSetWindowText.Call(child(hwnd, idcOK), uintptr(unsafe.Pointer(wide("Установка…"))))
 	opt := ui.opt
 	opt.Dir = windowText(child(hwnd, idcDir))
 	opt.StartMenu = isChecked(child(hwnd, idcStart))
 	opt.Desktop = isChecked(child(hwnd, idcDesk))
 	opt.Associations = isChecked(child(hwnd, idcAssoc))
-	res, err := install.Install(opt)
+	go func() {
+		res, err := install.Install(opt)
+		ui.mu.Lock()
+		ui.res = res
+		ui.err = err
+		ui.mu.Unlock()
+		_, _, _ = procPostMessage.Call(hwnd, wmInstallDone, 0, 0)
+	}()
+}
+
+func finishInstall(hwnd uintptr) {
+	ui.mu.Lock()
+	res, err := ui.res, ui.err
+	ui.mu.Unlock()
+	ui.installing = false
 	if err != nil {
-		_, _, _ = procEnableWindow.Call(child(hwnd, idcOK), 1)
+		setBusy(hwnd, false)
+		_, _, _ = procSetWindowText.Call(child(hwnd, idcOK), uintptr(unsafe.Pointer(wide("Установить"))))
 		messageBox(hwnd, err.Error(), "boo", mbOK|mbIconErr)
 		return
 	}
-	ui.res = res
 	text := "boo установлен в\n" + res.Dir + "\n\nКниги и заметки при удалении программы не стираются.\n\nЗапустить сейчас?"
 	if messageBox(hwnd, text, "boo", mbYesNo|mbIconInfo) == idYes {
 		_ = exec.Command(res.Exe).Start()
 	}
 	_, _, _ = procDestroyWindow.Call(hwnd)
+}
+
+func setBusy(hwnd uintptr, busy bool) {
+	en := uintptr(1)
+	if busy {
+		en = 0
+	}
+	for _, id := range []uintptr{idcDir, idcBrowse, idcStart, idcDesk, idcAssoc, idcOK, idcCancel} {
+		_, _, _ = procEnableWindow.Call(child(hwnd, id), en)
+	}
 }
 
 func child(parent uintptr, id uintptr) uintptr {
