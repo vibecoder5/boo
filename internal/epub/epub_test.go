@@ -74,6 +74,18 @@ func TestSampleBook(t *testing.T) {
 	if book.ChapterIndexByHref("OEBPS/ch3.xhtml") != 2 {
 		t.Fatal("chapter index")
 	}
+
+	sub, ok := LookupTOC(book.TOC, "1.0")
+	if !ok || sub.Title != "Клавиши" || sub.Fragment != "keys" || sub.ChapterIndex != 1 {
+		t.Fatalf("subchapter %#v %v", sub, ok)
+	}
+	keys := TOCKeysForChapter(book.TOC, 1)
+	if len(keys) != 3 || keys[0] != "1" || keys[1] != "1.0" || keys[2] != "1.1" {
+		t.Fatalf("chapter keys %#v", keys)
+	}
+	if ValidTOCKey("") || ValidTOCKey("1.") || ValidTOCKey("a.1") || !ValidTOCKey("1.0") {
+		t.Fatal("toc key")
+	}
 }
 
 func TestResolvePath(t *testing.T) {

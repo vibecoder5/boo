@@ -3,6 +3,7 @@ package epub
 import (
 	"io"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -89,6 +90,63 @@ func (b *Book) ChapterIndexByHref(href string) int {
 		}
 	}
 	return -1
+}
+
+func ValidTOCKey(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	for _, part := range strings.Split(key, ".") {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func WalkTOC(items []TOCItem, fn func(item TOCItem, key string)) {
+	var walk func([]TOCItem, string)
+	walk = func(items []TOCItem, prefix string) {
+		for i, it := range items {
+			key := strconv.Itoa(i)
+			if prefix != "" {
+				key = prefix + "." + key
+			}
+			fn(it, key)
+			if len(it.Children) > 0 {
+				walk(it.Children, key)
+			}
+		}
+	}
+	walk(items, "")
+}
+
+func LookupTOC(items []TOCItem, key string) (TOCItem, bool) {
+	var found TOCItem
+	ok := false
+	WalkTOC(items, func(item TOCItem, k string) {
+		if !ok && k == key {
+			found = item
+			ok = true
+		}
+	})
+	return found, ok
+}
+
+func TOCKeysForChapter(items []TOCItem, index int) []string {
+	var keys []string
+	WalkTOC(items, func(item TOCItem, key string) {
+		if item.ChapterIndex == index {
+			keys = append(keys, key)
+		}
+	})
+	return keys
 }
 
 func mimeFor(name, declared string) string {

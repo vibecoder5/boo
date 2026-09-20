@@ -51,6 +51,7 @@ type Workspace struct {
 	UndoLog      []UndoAction        `json:"undoLog,omitempty"`
 	TOCFold      map[string][]string `json:"tocFold"`
 	ReadChapters map[string][]int    `json:"readChapters,omitempty"`
+	ReadTOC      map[string][]string `json:"readTOC,omitempty"`
 	Pinned       bool                `json:"pinned,omitempty"`
 	CreatedAt    time.Time           `json:"createdAt"`
 	UpdatedAt    time.Time           `json:"updatedAt"`
@@ -116,6 +117,7 @@ type BookSnapshot struct {
 	History      []HistoryEntry `json:"history,omitempty"`
 	TOCFold      []string       `json:"tocFold,omitempty"`
 	ReadChapters []int          `json:"readChapters,omitempty"`
+	ReadTOC      []string       `json:"readTOC,omitempty"`
 	ListIDs      []string       `json:"listIds,omitempty"`
 	TrashRel     string         `json:"trashRel,omitempty"`
 	FileName     string         `json:"fileName,omitempty"`
@@ -315,6 +317,9 @@ func Open() (*Store, error) {
 	s.normalizeWorkspaces()
 	s.ensureWorkspace()
 	s.migrateLibrary()
+	if s.migrateDuplicateKeys() {
+		migrated = true
+	}
 	if migrated {
 		_ = s.save()
 	}
@@ -331,6 +336,7 @@ func emptyWorkspace(id, name string) Workspace {
 		Books:        map[string]Progress{},
 		TOCFold:      map[string][]string{},
 		ReadChapters: map[string][]int{},
+		ReadTOC:      map[string][]string{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -409,6 +415,9 @@ func (s *Store) normalizeWorkspaces() {
 		}
 		if ws.ReadChapters == nil {
 			ws.ReadChapters = map[string][]int{}
+		}
+		if ws.ReadTOC == nil {
+			ws.ReadTOC = map[string][]string{}
 		}
 		if ws.Lists == nil {
 			ws.Lists = []ReadingList{}
@@ -909,6 +918,12 @@ func moveBookToWorkspace(dest, src *Workspace, entry Entry) {
 	if ch := src.ReadChapters[entry.Key]; len(ch) > 0 {
 		dest.ReadChapters[entry.Key] = append([]int(nil), ch...)
 	}
+	if dest.ReadTOC == nil {
+		dest.ReadTOC = map[string][]string{}
+	}
+	if toc := src.ReadTOC[entry.Key]; len(toc) > 0 {
+		dest.ReadTOC[entry.Key] = append([]string(nil), toc...)
+	}
 }
 
 func stripBookFromWorkspace(ws *Workspace, key string) {
@@ -927,6 +942,7 @@ func stripBookFromWorkspace(ws *Workspace, key string) {
 	ws.History = withoutBookItems(ws.History, key, func(h HistoryEntry) string { return h.BookKey })
 	delete(ws.TOCFold, key)
 	delete(ws.ReadChapters, key)
+	delete(ws.ReadTOC, key)
 	for i := range ws.Lists {
 		var keepKeys []string
 		for _, k := range ws.Lists[i].BookKeys {
@@ -959,6 +975,178 @@ func withoutBookItems[T any](src []T, key string, keyOf func(T) string) []T {
 		}
 	}
 	return out
+}
+
+func (s *Store) migrateDuplicateKeys() bool {
+	type occ struct {
+		ws    *Workspace
+		title string
+	}
+	byKey := map[string][]occ{}
+	for i := range s.data.Workspaces {
+		ws := &s.data.Workspaces[i]
+		seen := map[string]bool{}
+		for _, e := range ws.Library {
+			if e.Key == "" || seen[e.Key] {
+				continue
+			}
+			seen[e.Key] = true
+			byKey[e.Key] = append(byKey[e.Key], occ{ws: ws, title: e.Title})
+		}
+	}
+	changed := false
+	for key, group := range byKey {
+		if len(group) < 2 {
+			continue
+		}
+		canon := group[0].title
+		mixed := false
+		for _, o := range group[1:] {
+			if !sameBookTitle(o.title, canon) {
+				mixed = true
+				break
+			}
+		}
+		if !mixed {
+			continue
+		}
+		for _, o := range group {
+			if sameBookTitle(o.title, canon) {
+				continue
+			}
+			to := disambiguatedKey(key, o.title)
+			if libraryHas(o.ws, to) && !sameBookTitle(libraryTitle(o.ws, to), o.title) {
+				to = disambiguatedKey(key, o.title+"|"+o.ws.ID)
+			}
+			if libraryHas(o.ws, to) {
+				continue
+			}
+			rekeyWorkspace(o.ws, key, to)
+			changed = true
+		}
+	}
+	return changed
+}
+
+func libraryTitle(ws *Workspace, key string) string {
+	if e, ok := libraryEntry(ws, key); ok {
+		return e.Title
+	}
+	return ""
+}
+
+func sameBookTitle(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+func disambiguatedKey(key, title string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(title))))
+	return key + "#" + hex.EncodeToString(sum[:6])
+}
+
+func (s *Store) BindKey(key, title string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.bindKeyLocked(s.ws(), strings.TrimSpace(key), title)
+}
+
+func (s *Store) bindKeyLocked(ws *Workspace, key, title string) string {
+	if key == "" {
+		return key
+	}
+	alt := disambiguatedKey(key, title)
+	if e, ok := libraryEntry(ws, alt); ok && sameBookTitle(e.Title, title) {
+		return alt
+	}
+	conflict := false
+	for i := range s.data.Workspaces {
+		e, ok := libraryEntry(&s.data.Workspaces[i], key)
+		if !ok {
+			continue
+		}
+		if !sameBookTitle(e.Title, title) {
+			conflict = true
+			break
+		}
+	}
+	if !conflict {
+		return key
+	}
+	if e, ok := libraryEntry(ws, alt); ok && !sameBookTitle(e.Title, title) {
+		return disambiguatedKey(key, title+"|"+ws.ID)
+	}
+	return alt
+}
+
+func rekeyWorkspace(ws *Workspace, from, to string) {
+	if ws == nil || from == "" || to == "" || from == to || libraryHas(ws, to) {
+		return
+	}
+	for i := range ws.Library {
+		if ws.Library[i].Key == from {
+			ws.Library[i].Key = to
+		}
+	}
+	if p, ok := ws.Books[from]; ok {
+		ws.Books[to] = p
+		delete(ws.Books, from)
+	}
+	rewriteBookKeys(ws.Bookmarks, from, to, func(b *Bookmark) *string { return &b.BookKey })
+	rewriteBookKeys(ws.Highlights, from, to, func(h *Highlight) *string { return &h.BookKey })
+	rewriteBookKeys(ws.Notes, from, to, func(n *Note) *string { return &n.BookKey })
+	rewriteBookKeys(ws.Todos, from, to, func(t *Todo) *string { return &t.BookKey })
+	rewriteBookKeys(ws.History, from, to, func(h *HistoryEntry) *string { return &h.BookKey })
+	if fold, ok := ws.TOCFold[from]; ok {
+		ws.TOCFold[to] = fold
+		delete(ws.TOCFold, from)
+	}
+	if ch, ok := ws.ReadChapters[from]; ok {
+		ws.ReadChapters[to] = ch
+		delete(ws.ReadChapters, from)
+	}
+	if toc, ok := ws.ReadTOC[from]; ok {
+		ws.ReadTOC[to] = toc
+		delete(ws.ReadTOC, from)
+	}
+	for i := range ws.Lists {
+		for j, k := range ws.Lists[i].BookKeys {
+			if k == from {
+				ws.Lists[i].BookKeys[j] = to
+			}
+		}
+	}
+	for i := range ws.UndoLog {
+		a := &ws.UndoLog[i]
+		if a.BookKey == from {
+			a.BookKey = to
+		}
+		if a.Bookmark != nil && a.Bookmark.BookKey == from {
+			a.Bookmark.BookKey = to
+		}
+		if a.Note != nil && a.Note.BookKey == from {
+			a.Note.BookKey = to
+		}
+		if a.Book == nil {
+			continue
+		}
+		if a.Book.Entry.Key == from {
+			a.Book.Entry.Key = to
+		}
+		rewriteBookKeys(a.Book.Bookmarks, from, to, func(b *Bookmark) *string { return &b.BookKey })
+		rewriteBookKeys(a.Book.Highlights, from, to, func(h *Highlight) *string { return &h.BookKey })
+		rewriteBookKeys(a.Book.Notes, from, to, func(n *Note) *string { return &n.BookKey })
+		rewriteBookKeys(a.Book.Todos, from, to, func(t *Todo) *string { return &t.BookKey })
+		rewriteBookKeys(a.Book.History, from, to, func(h *HistoryEntry) *string { return &h.BookKey })
+	}
+}
+
+func rewriteBookKeys[T any](items []T, from, to string, keyPtr func(*T) *string) {
+	for i := range items {
+		p := keyPtr(&items[i])
+		if *p == from {
+			*p = to
+		}
+	}
 }
 
 func (s *Store) migrateLibrary() {
@@ -1458,6 +1646,13 @@ func (s *Store) Remember(e Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ws := s.ws()
+	original := strings.TrimSpace(e.Key)
+	e.Key = s.bindKeyLocked(ws, original, e.Title)
+	if e.Key != original && original != "" {
+		if old, ok := libraryEntry(ws, original); ok && sameBookTitle(old.Title, e.Title) {
+			rekeyWorkspace(ws, original, e.Key)
+		}
+	}
 	e.UpdatedAt = time.Now()
 	for _, old := range ws.Library {
 		if old.Key != e.Key {
@@ -1479,7 +1674,7 @@ func (s *Store) Remember(e Entry) error {
 		e.DictionaryID = old.DictionaryID
 	}
 	if e.Path == "" || e.Cover == "" {
-		path, cover := s.sharedFiles(e.Key, ws.ID)
+		path, cover := s.sharedFiles(e.Key, e.Title, ws.ID)
 		if e.Path == "" {
 			e.Path = path
 		}
@@ -1508,13 +1703,13 @@ func (s *Store) Remember(e Entry) error {
 	return s.save()
 }
 
-func (s *Store) sharedFiles(key, exceptID string) (path, cover string) {
+func (s *Store) sharedFiles(key, title, exceptID string) (path, cover string) {
 	for _, ws := range s.data.Workspaces {
 		if ws.ID == exceptID {
 			continue
 		}
 		for _, e := range ws.Library {
-			if e.Key != key {
+			if e.Key != key || !sameBookTitle(e.Title, title) {
 				continue
 			}
 			if path == "" {
@@ -1640,6 +1835,7 @@ func (s *Store) Remove(key string) error {
 	ws.History = history
 	delete(ws.TOCFold, key)
 	delete(ws.ReadChapters, key)
+	delete(ws.ReadTOC, key)
 	for i := range ws.Lists {
 		var keepKeys []string
 		for _, k := range ws.Lists[i].BookKeys {
@@ -1690,26 +1886,102 @@ func (s *Store) SetTOCFold(bookKey string, ids []string) error {
 func (s *Store) ReadChapters(bookKey string) []int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	src := s.ws().ReadChapters[bookKey]
-	if len(src) == 0 {
-		return []int{}
-	}
-	return append([]int(nil), src...)
+	return copyInts(s.ws().ReadChapters[bookKey])
 }
 
-func (s *Store) SetChapterRead(bookKey string, index int, read bool) ([]int, error) {
+func (s *Store) ReadTOC(bookKey string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return copyStrings(s.ws().ReadTOC[bookKey])
+}
+
+func (s *Store) SetChapterRead(bookKey string, index int, read bool, dropTOC ...string) ([]int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if index < 0 {
 		return nil, fmt.Errorf("bad chapter")
 	}
 	ws := s.ws()
+	chapters := applyChapterRead(ws.ReadChapters[bookKey], index, read)
+	toc := dropStringKeys(ws.ReadTOC[bookKey], dropTOC)
+	s.putReadMarksLocked(ws, bookKey, chapters, toc)
+	if err := s.save(); err != nil {
+		return nil, err
+	}
+	return copyInts(s.ws().ReadChapters[bookKey]), nil
+}
+
+func (s *Store) SetTOCRead(bookKey, key string, read bool, chapterIndex int, sameChapterKeys []string) ([]int, []string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, nil, fmt.Errorf("нет такого пункта оглавления")
+	}
+	ws := s.ws()
+	chapters := append([]int(nil), ws.ReadChapters[bookKey]...)
+	toc := append([]string(nil), ws.ReadTOC[bookKey]...)
+	chapterMarked := false
+	if chapterIndex >= 0 {
+		for _, i := range chapters {
+			if i == chapterIndex {
+				chapterMarked = true
+				break
+			}
+		}
+	}
+	if read {
+		toc = append(toc, key)
+	} else {
+		if chapterMarked {
+			keepCh := chapters[:0]
+			for _, i := range chapters {
+				if i != chapterIndex {
+					keepCh = append(keepCh, i)
+				}
+			}
+			chapters = append([]int(nil), keepCh...)
+			for _, k := range sameChapterKeys {
+				if k != key {
+					toc = append(toc, k)
+				}
+			}
+		}
+		toc = dropStringKeys(toc, []string{key})
+	}
+	s.putReadMarksLocked(ws, bookKey, chapters, toc)
+	if err := s.save(); err != nil {
+		return nil, nil, err
+	}
+	return copyInts(s.ws().ReadChapters[bookKey]), copyStrings(s.ws().ReadTOC[bookKey]), nil
+}
+
+func (s *Store) putReadMarksLocked(ws *Workspace, bookKey string, chapters []int, toc []string) {
 	if ws.ReadChapters == nil {
 		ws.ReadChapters = map[string][]int{}
 	}
+	if ws.ReadTOC == nil {
+		ws.ReadTOC = map[string][]string{}
+	}
+	chapters = cleanReadChapters(chapters)
+	toc = cleanReadTOC(toc)
+	if len(chapters) == 0 {
+		delete(ws.ReadChapters, bookKey)
+	} else {
+		ws.ReadChapters[bookKey] = chapters
+	}
+	if len(toc) == 0 {
+		delete(ws.ReadTOC, bookKey)
+	} else {
+		ws.ReadTOC[bookKey] = toc
+	}
+	ws.UpdatedAt = time.Now()
+}
+
+func applyChapterRead(src []int, index int, read bool) []int {
 	seen := map[int]bool{}
 	var clean []int
-	for _, i := range ws.ReadChapters[bookKey] {
+	for _, i := range src {
 		if i < 0 || seen[i] {
 			continue
 		}
@@ -1729,20 +2001,76 @@ func (s *Store) SetChapterRead(bookKey string, index int, read bool) ([]int, err
 		}
 		clean = keep
 	}
+	return clean
+}
+
+func cleanReadChapters(src []int) []int {
+	seen := map[int]bool{}
+	var clean []int
+	for _, i := range src {
+		if i < 0 || seen[i] {
+			continue
+		}
+		seen[i] = true
+		clean = append(clean, i)
+	}
 	sort.Ints(clean)
-	if len(clean) == 0 {
-		delete(ws.ReadChapters, bookKey)
-	} else {
-		ws.ReadChapters[bookKey] = clean
-	}
-	ws.UpdatedAt = time.Now()
-	if err := s.save(); err != nil {
-		return nil, err
-	}
 	if clean == nil {
-		clean = []int{}
+		return []int{}
 	}
-	return append([]int(nil), clean...), nil
+	return clean
+}
+
+func cleanReadTOC(src []string) []string {
+	seen := map[string]bool{}
+	var clean []string
+	for _, id := range src {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		clean = append(clean, id)
+	}
+	sort.Strings(clean)
+	if clean == nil {
+		return []string{}
+	}
+	return clean
+}
+
+func dropStringKeys(src []string, drop []string) []string {
+	if len(src) == 0 || len(drop) == 0 {
+		return append([]string(nil), src...)
+	}
+	skip := map[string]bool{}
+	for _, k := range drop {
+		k = strings.TrimSpace(k)
+		if k != "" {
+			skip[k] = true
+		}
+	}
+	var out []string
+	for _, k := range src {
+		if !skip[k] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func copyInts(src []int) []int {
+	if len(src) == 0 {
+		return []int{}
+	}
+	return append([]int(nil), src...)
+}
+
+func copyStrings(src []string) []string {
+	if len(src) == 0 {
+		return []string{}
+	}
+	return append([]string(nil), src...)
 }
 
 func (s *Store) Bookmarks(bookKey string) []Bookmark {
@@ -2420,6 +2748,7 @@ func (s *Store) SaveBookFile(key, name string, data []byte) (string, error) {
 }
 
 func (s *Store) SaveCover(key, mime string, data []byte) (string, error) {
+	_ = key
 	ext := ".img"
 	switch {
 	case strings.Contains(mime, "png"):
@@ -2435,11 +2764,75 @@ func (s *Store) SaveCover(key, mime string, data []byte) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	name := fileID(key) + ext
+	sum := sha256.Sum256(data)
+	name := hex.EncodeToString(sum[:12]) + ext
 	if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
 		return "", err
 	}
 	return name, nil
+}
+
+func (s *Store) SetCover(wsID, key, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ws := s.ws()
+	if strings.TrimSpace(wsID) != "" {
+		ws = workspaceByID(s.data.Workspaces, wsID)
+		if ws == nil {
+			return os.ErrNotExist
+		}
+	}
+	key = strings.TrimSpace(key)
+	name = filepath.Base(strings.TrimSpace(name))
+	if key == "" || name == "" || name == "." {
+		return os.ErrNotExist
+	}
+	for i := range ws.Library {
+		if ws.Library[i].Key != key {
+			continue
+		}
+		ws.Library[i].Cover = name
+		ws.UpdatedAt = time.Now()
+		return s.save()
+	}
+	return os.ErrNotExist
+}
+
+type EntryRef struct {
+	WorkspaceID string
+	Entry       Entry
+}
+
+func (s *Store) ConflictingCoverEntries() []EntryRef {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	type rec struct {
+		wsID string
+		e    Entry
+	}
+	byCover := map[string][]rec{}
+	for _, ws := range s.data.Workspaces {
+		for _, e := range ws.Library {
+			if e.Cover == "" {
+				continue
+			}
+			byCover[e.Cover] = append(byCover[e.Cover], rec{wsID: ws.ID, e: e})
+		}
+	}
+	var out []EntryRef
+	for _, group := range byCover {
+		titles := map[string]bool{}
+		for _, r := range group {
+			titles[strings.ToLower(strings.TrimSpace(r.e.Title))] = true
+		}
+		if len(titles) < 2 {
+			continue
+		}
+		for _, r := range group {
+			out = append(out, EntryRef{WorkspaceID: r.wsID, Entry: r.e})
+		}
+	}
+	return out
 }
 
 func (s *Store) CoverFile(rel string) (string, error) {

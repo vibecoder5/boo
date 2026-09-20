@@ -727,6 +727,9 @@ func TestMoveBook(t *testing.T) {
 	if _, err := st.SetChapterRead("id:1", 1, true); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := st.SetTOCRead("id:1", "1.0", true, 1, []string{"1", "1.0", "1.1"}); err != nil {
+		t.Fatal(err)
+	}
 	list, err := st.CreateList("На отпуск", "id:1")
 	if err != nil {
 		t.Fatal(err)
@@ -776,7 +779,7 @@ func TestMoveBook(t *testing.T) {
 	if n := len(st.History(10)); n != 0 {
 		t.Fatalf("source history %d", n)
 	}
-	if len(st.TOCFold("id:1")) != 0 || len(st.ReadChapters("id:1")) != 0 {
+	if len(st.TOCFold("id:1")) != 0 || len(st.ReadChapters("id:1")) != 0 || len(st.ReadTOC("id:1")) != 0 {
 		t.Fatal("source extras")
 	}
 	gotList := st.Lists()[0]
@@ -817,6 +820,9 @@ func TestMoveBook(t *testing.T) {
 	}
 	if ch := st.ReadChapters("id:1"); len(ch) != 1 || ch[0] != 1 {
 		t.Fatalf("dest read %#v", ch)
+	}
+	if toc := st.ReadTOC("id:1"); len(toc) != 1 || toc[0] != "1.0" {
+		t.Fatalf("dest toc %#v", toc)
 	}
 	if err := st.SwitchWorkspace(first.ID); err != nil {
 		t.Fatal(err)
@@ -1117,6 +1123,57 @@ func TestSetChapterRead(t *testing.T) {
 	}
 	if len(st.ReadChapters("id:1")) != 0 {
 		t.Fatal("read chapters left after remove")
+	}
+}
+
+func TestSetTOCRead(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetTOCRead("id:1", "", true, 1, nil); err == nil {
+		t.Fatal("expected empty key error")
+	}
+	chapters, toc, err := st.SetTOCRead("id:1", "1.0", true, 1, []string{"1", "1.0", "1.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chapters) != 0 || len(toc) != 1 || toc[0] != "1.0" {
+		t.Fatalf("add sub %#v %#v", chapters, toc)
+	}
+	if _, err := st.SetChapterRead("id:1", 1, true, "1.0"); err != nil {
+		t.Fatal(err)
+	}
+	if have := st.ReadTOC("id:1"); len(have) != 0 {
+		t.Fatalf("chapter mark should drop toc %#v", have)
+	}
+	chapters, toc, err = st.SetTOCRead("id:1", "1.0", false, 1, []string{"1", "1.0", "1.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chapters) != 0 {
+		t.Fatalf("expanded chapter %#v", chapters)
+	}
+	if len(toc) != 2 || toc[0] != "1" || toc[1] != "1.1" {
+		t.Fatalf("siblings stay %#v", toc)
+	}
+	if _, _, err := st.SetTOCRead("id:1", "1", false, 1, []string{"1", "1.0", "1.1"}); err != nil {
+		t.Fatal(err)
+	}
+	if have := st.ReadTOC("id:1"); len(have) != 1 || have[0] != "1.1" {
+		t.Fatalf("unset parent %#v", have)
+	}
+	if err := st.Remember(Entry{Key: "id:1", Title: "Книга"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remove("id:1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.ReadTOC("id:1")) != 0 {
+		t.Fatal("read toc left after remove")
 	}
 }
 
@@ -1715,5 +1772,133 @@ func TestSafeSyncRel(t *testing.T) {
 	}
 	if _, ok := SafeSyncRel("library/foo.tmp"); ok {
 		t.Fatal("tmp")
+	}
+}
+
+func TestSaveCoverUsesImageBytes(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.SaveCover("id:same", "image/jpeg", []byte("cover-one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.SaveCover("id:same", "image/jpeg", []byte("cover-two"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Fatal("different pictures got the same cover file")
+	}
+	again, err := st.SaveCover("id:other", "image/jpeg", []byte("cover-one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != a {
+		t.Fatalf("same picture should reuse file: %s %s", a, again)
+	}
+}
+
+func TestRememberSplitsDuplicateIdentifiers(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(Entry{Key: "id:uuid", Title: "Интервью", Author: "Шао"}); err != nil {
+		t.Fatal(err)
+	}
+	firstWS := st.CurrentWorkspace()
+	second, err := st.AddWorkspace("Golang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SwitchWorkspace(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(Entry{Key: "id:uuid", Title: "100 ошибок Go", Author: "Харшани"}); err != nil {
+		t.Fatal(err)
+	}
+	items := st.Library()
+	if len(items) != 1 || items[0].Title != "100 ошибок Go" || items[0].Key == "id:uuid" {
+		t.Fatalf("go book %#v", items)
+	}
+	if !strings.HasPrefix(items[0].Key, "id:uuid#") {
+		t.Fatalf("expected suffixed key, got %q", items[0].Key)
+	}
+	if err := st.SwitchWorkspace(firstWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	first, ok := st.Entry("id:uuid")
+	if !ok || first.Title != "Интервью" {
+		t.Fatalf("first book %#v %v", first, ok)
+	}
+}
+
+func TestMigrateDuplicateKeysOnOpen(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(Entry{Key: "id:uuid", Title: "Интервью", Author: "Шао", Cover: "shared.jpg"}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.AddWorkspace("Golang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(st.Dir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data Data
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	for i := range data.Workspaces {
+		if data.Workspaces[i].ID != second.ID {
+			continue
+		}
+		data.Workspaces[i].Library = []Entry{{
+			Key:    "id:uuid",
+			Title:  "100 ошибок Go",
+			Author: "Харшани",
+			Cover:  "shared.jpg",
+		}}
+		data.Workspaces[i].Books = map[string]Progress{
+			"id:uuid": {Title: "100 ошибок Go", Author: "Харшани"},
+		}
+	}
+	out, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(st.Dir(), "state.json"), out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st2, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st2.SwitchWorkspace(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	items := st2.Library()
+	if len(items) != 1 || items[0].Title != "100 ошибок Go" || items[0].Key == "id:uuid" {
+		t.Fatalf("migrated go book %#v", items)
+	}
+	conflicts := st2.ConflictingCoverEntries()
+	if len(conflicts) != 2 {
+		t.Fatalf("cover conflicts %#v", conflicts)
 	}
 }
