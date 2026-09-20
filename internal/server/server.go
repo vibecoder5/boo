@@ -34,6 +34,7 @@ type Server struct {
 
 func New(st *store.Store, ui fs.FS, book *epub.Book) *Server {
 	s := &Server{store: st, drive: drive.New(st.Dir()), ui: ui, book: book, dicts: map[string]*dict.Index{}}
+	s.repairSharedCovers()
 	if book != nil {
 		_ = s.remember(book)
 	}
@@ -154,6 +155,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		"bookReadStats": nil,
 		"tocFold":       []string{},
 		"readChapters":  []int{},
+		"readTOC":       []string{},
 		"dictionaries":  s.store.Dictionaries(),
 	}
 	if s.drive != nil {
@@ -168,6 +170,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		payload["notes"] = s.store.Notes(book.Key)
 		payload["tocFold"] = s.store.TOCFold(book.Key)
 		payload["readChapters"] = s.store.ReadChapters(book.Key)
+		payload["readTOC"] = s.store.ReadTOC(book.Key)
 		payload["bookReadStats"] = s.store.ReadStats(book.Key)
 	}
 	todoBook, todos := s.todoState(book)
@@ -942,23 +945,44 @@ func (s *Server) handleSetChapterRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ChapterIndex int  `json:"chapterIndex"`
-		Read         bool `json:"read"`
+		ChapterIndex int    `json:"chapterIndex"`
+		TOCKey       string `json:"tocKey"`
+		Read         bool   `json:"read"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if body.TOCKey != "" {
+		if !epub.ValidTOCKey(body.TOCKey) {
+			http.Error(w, "нет такого пункта оглавления", http.StatusBadRequest)
+			return
+		}
+		item, ok := epub.LookupTOC(book.TOC, body.TOCKey)
+		if !ok {
+			http.Error(w, "нет такого пункта оглавления", http.StatusBadRequest)
+			return
+		}
+		same := epub.TOCKeysForChapter(book.TOC, item.ChapterIndex)
+		chapters, toc, err := s.store.SetTOCRead(book.Key, body.TOCKey, body.Read, item.ChapterIndex, same)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"readChapters": chapters, "readTOC": toc})
 		return
 	}
 	if body.ChapterIndex < 0 || body.ChapterIndex >= len(book.Chapters) {
 		http.Error(w, "bad chapter", http.StatusBadRequest)
 		return
 	}
-	list, err := s.store.SetChapterRead(book.Key, body.ChapterIndex, body.Read)
+	drop := epub.TOCKeysForChapter(book.TOC, body.ChapterIndex)
+	list, err := s.store.SetChapterRead(book.Key, body.ChapterIndex, body.Read, drop...)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"readChapters": list})
+	writeJSON(w, map[string]any{"readChapters": list, "readTOC": s.store.ReadTOC(book.Key)})
 }
 
 func (s *Server) handleSaveUI(w http.ResponseWriter, r *http.Request) {
@@ -1038,6 +1062,7 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	book.Key = s.store.BindKey(book.Key, book.Title)
 	if saved, err := s.store.SaveBookFile(book.Key, name, data); err == nil {
 		book.Path = saved
 	}
@@ -1378,16 +1403,12 @@ func (s *Server) handleLibrarySearch(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(hits))
 	for _, h := range hits {
 		e := h.Entry
-		cover := ""
-		if e.Cover != "" {
-			cover = "/api/library/cover?key=" + url.QueryEscape(e.Key)
-		}
 		out = append(out, map[string]any{
 			"key":      e.Key,
 			"title":    e.Title,
 			"author":   e.Author,
 			"format":   e.Format,
-			"coverUrl": cover,
+			"coverUrl": libraryCoverURL(e),
 			"finished": e.Finished,
 			"canOpen":  bundledBook(e) || e.Path != "",
 			"workspace": map[string]any{
@@ -1401,18 +1422,56 @@ func (s *Server) handleLibrarySearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLibraryCover(w http.ResponseWriter, r *http.Request) {
-	key := r.URL.Query().Get("key")
-	entry, ok := s.store.EntryAnywhere(key)
-	if !ok || entry.Cover == "" {
-		http.NotFound(w, r)
-		return
+	name := r.URL.Query().Get("n")
+	if name == "" {
+		key := r.URL.Query().Get("key")
+		entry, ok := s.store.EntryAnywhere(key)
+		if !ok || entry.Cover == "" {
+			http.NotFound(w, r)
+			return
+		}
+		name = entry.Cover
 	}
-	path, err := s.store.CoverFile(entry.Cover)
+	path, err := s.store.CoverFile(name)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
+	w.Header().Set("Cache-Control", "private, max-age=31536000")
 	http.ServeFile(w, r, path)
+}
+
+func libraryCoverURL(e store.Entry) string {
+	if e.Cover == "" {
+		return ""
+	}
+	return "/api/library/cover?n=" + url.QueryEscape(e.Cover)
+}
+
+func (s *Server) repairSharedCovers() {
+	if s.store == nil {
+		return
+	}
+	for _, ref := range s.store.ConflictingCoverEntries() {
+		book, err := openLibrary(ref.Entry)
+		if err != nil {
+			continue
+		}
+		if book.CoverHref == "" {
+			_ = book.Close()
+			continue
+		}
+		data, mime, err := book.Resource(book.CoverHref)
+		_ = book.Close()
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		name, err := s.store.SaveCover(ref.Entry.Key, mime, data)
+		if err != nil {
+			continue
+		}
+		_ = s.store.SetCover(ref.WorkspaceID, ref.Entry.Key, name)
+	}
 }
 
 func (s *Server) handleResource(w http.ResponseWriter, r *http.Request) {
@@ -1444,6 +1503,7 @@ func (s *Server) remember(book *epub.Book) error {
 	if book == nil {
 		return nil
 	}
+	book.Key = s.store.BindKey(book.Key, book.Title)
 	cover := ""
 	if book.CoverHref != "" {
 		if data, mime, err := book.Resource(book.CoverHref); err == nil {
@@ -1477,16 +1537,12 @@ func (s *Server) libraryPayload() []map[string]any {
 				percent = 100
 			}
 		}
-		cover := ""
-		if e.Cover != "" {
-			cover = "/api/library/cover?key=" + url.QueryEscape(e.Key)
-		}
 		out = append(out, map[string]any{
 			"key":          e.Key,
 			"title":        e.Title,
 			"author":       e.Author,
 			"format":       e.Format,
-			"coverUrl":     cover,
+			"coverUrl":     libraryCoverURL(e),
 			"chapterIndex": e.ChapterIndex,
 			"chapterN":     e.ChapterN,
 			"percent":      int(percent),

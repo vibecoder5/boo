@@ -50,6 +50,9 @@ func (s *Store) Reload() error {
 	s.normalizeWorkspaces()
 	s.ensureWorkspace()
 	s.migrateLibrary()
+	if s.migrateDuplicateKeys() {
+		return s.save()
+	}
 	return nil
 }
 

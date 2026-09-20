@@ -52,6 +52,8 @@ const state = {
   activeNoteId: "",
   tocFold: [],
   readChapters: [],
+  readTOC: [],
+  chapterFragment: "",
   chapterHTML: "",
   dictionaries: [],
   drive: {},
@@ -774,11 +776,12 @@ function toggleHideReadChapters() {
   saveUI();
 }
 
-function tocNodeVisible(item) {
+function tocNodeVisible(item, path) {
   if (!hideReadChaptersOn()) return true;
+  const trail = path || [];
   const kids = item.children || [];
-  if (kids.some(tocNodeVisible)) return true;
-  if (item.chapterIndex >= 0) return !chapterRead(item.chapterIndex);
+  if (kids.some((kid, i) => tocNodeVisible(kid, trail.concat(i)))) return true;
+  if (item.chapterIndex >= 0) return !tocItemRead(item, trail);
   return false;
 }
 
@@ -831,18 +834,48 @@ function chapterRead(index) {
   return (state.readChapters || []).some((i) => i === index);
 }
 
+function tocPathRead(key) {
+  return (state.readTOC || []).includes(key);
+}
+
+function tocItemRead(item, path) {
+  if (!item || item.chapterIndex < 0) return false;
+  if (tocPathRead(tocKey(path || []))) return true;
+  return chapterRead(item.chapterIndex);
+}
+
+function tocItemActive(item) {
+  if (!item || item.chapterIndex < 0 || item.chapterIndex !== state.chapterIndex) return false;
+  const frag = item.fragment || "";
+  const cur = state.chapterFragment || "";
+  if (cur) return frag === cur;
+  return !frag;
+}
+
 function chapterReadLabel(read) {
   return read ? "Снять отметку о прочтении главы" : "Отметить главу прочитанной";
 }
 
-async function setChapterRead(index, read) {
-  if (!state.book || index < 0) return;
+function applyReadMarks(data) {
+  if (!data) return;
+  if (data.readChapters) state.readChapters = data.readChapters;
+  if (data.readTOC) state.readTOC = data.readTOC;
+}
+
+async function setChapterRead(index, read, tocKey) {
+  if (!state.book) return;
+  const body = { read };
+  if (tocKey) body.tocKey = tocKey;
+  else {
+    if (index < 0) return;
+    body.chapterIndex = index;
+  }
   const data = await api("/api/chapters/read", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chapterIndex: index, read }),
+    body: JSON.stringify(body),
   });
-  state.readChapters = data.readChapters || [];
+  applyReadMarks(data);
   refreshTOC();
   paintChapterRead();
 }
@@ -868,10 +901,11 @@ function renderTOC(items, into, path) {
   into.replaceChildren();
   const trail = path || [];
   items.forEach((item, i) => {
-    if (!tocNodeVisible(item)) return;
-    const key = tocKey(trail.concat(i));
+    const itemPath = trail.concat(i);
+    if (!tocNodeVisible(item, itemPath)) return;
+    const key = tocKey(itemPath);
     const kids = item.children || [];
-    const hasKids = kids.some(tocNodeVisible);
+    const hasKids = kids.some((kid, j) => tocNodeVisible(kid, itemPath.concat(j)));
     const node = document.createElement("div");
     node.className = "toc-node";
     const row = document.createElement("div");
@@ -897,15 +931,15 @@ function renderTOC(items, into, path) {
     const a = document.createElement("a");
     a.href = "#";
     a.textContent = item.title || "…";
-    if (item.chapterIndex === state.chapterIndex) a.classList.add("active");
-    if (item.chapterIndex >= 0 && chapterRead(item.chapterIndex)) a.classList.add("read");
+    if (tocItemActive(item)) a.classList.add("active");
+    if (item.chapterIndex >= 0 && tocItemRead(item, itemPath)) a.classList.add("read");
     a.addEventListener("click", (e) => {
       e.preventDefault();
       if (item.chapterIndex >= 0) openChapter(item.chapterIndex, item.fragment, true);
     });
     row.appendChild(a);
     if (item.chapterIndex >= 0) {
-      const read = chapterRead(item.chapterIndex);
+      const read = tocItemRead(item, itemPath);
       const mark = document.createElement("button");
       mark.type = "button";
       mark.className = "toc-read";
@@ -916,7 +950,7 @@ function renderTOC(items, into, path) {
       mark.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        setChapterRead(item.chapterIndex, !read).catch((err) => {
+        setChapterRead(item.chapterIndex, !read, key).catch((err) => {
           alert(err.message || "Не удалось отметить главу");
         });
       });
@@ -927,7 +961,7 @@ function renderTOC(items, into, path) {
       const nest = document.createElement("div");
       nest.className = "nested";
       nest.hidden = isTocItemCollapsed(key);
-      renderTOC(kids, nest, trail.concat(i));
+      renderTOC(kids, nest, itemPath);
       node.appendChild(nest);
     }
     into.appendChild(node);
@@ -3136,6 +3170,7 @@ async function openChapter(index, fragment, resetScroll, query, hitOffset) {
   hideCtx();
   const data = await api(`/api/chapter?i=${index}`);
   state.chapterIndex = data.index;
+  state.chapterFragment = fragment || "";
   state.chapterHTML = data.html;
   paintContent(query, hitOffset);
   const heading = $("content").querySelector("h1, h2");
@@ -3664,6 +3699,7 @@ async function applyState(payload, restore) {
   state.activeNoteId = "";
   state.tocFold = payload.tocFold || [];
   state.readChapters = payload.readChapters || [];
+  state.readTOC = payload.readTOC || [];
   state.dictionaries = payload.dictionaries || [];
   dictCache.clear();
   hideDictTip();

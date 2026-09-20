@@ -145,6 +145,9 @@ func (s *Store) snapshotBookLocked(key string, entry Entry, shared bool) UndoAct
 	if ch := ws.ReadChapters[key]; len(ch) > 0 {
 		snap.ReadChapters = append([]int(nil), ch...)
 	}
+	if toc := ws.ReadTOC[key]; len(toc) > 0 {
+		snap.ReadTOC = append([]string(nil), toc...)
+	}
 	for _, list := range ws.Lists {
 		for _, k := range list.BookKeys {
 			if k == key {
@@ -278,6 +281,14 @@ func (s *Store) restoreBookLocked(a UndoAction) {
 		}
 		if len(ws.ReadChapters[entry.Key]) == 0 {
 			ws.ReadChapters[entry.Key] = append([]int(nil), snap.ReadChapters...)
+		}
+	}
+	if len(snap.ReadTOC) > 0 {
+		if ws.ReadTOC == nil {
+			ws.ReadTOC = map[string][]string{}
+		}
+		if len(ws.ReadTOC[entry.Key]) == 0 {
+			ws.ReadTOC[entry.Key] = append([]string(nil), snap.ReadTOC...)
 		}
 	}
 	for _, listID := range snap.ListIDs {

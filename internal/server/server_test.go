@@ -877,6 +877,94 @@ func TestChapterReadAPI(t *testing.T) {
 	}
 }
 
+func TestTOCReadAPI(t *testing.T) {
+	st := testStore(t)
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
+	book, err := demoBook()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = book.Close() })
+	srv := New(st, fs.FS(ui), book)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/chapters/read", strings.NewReader(`{"tocKey":"1.0","read":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("read: %d", res.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	chapters, _ := body["readChapters"].([]any)
+	toc, _ := body["readTOC"].([]any)
+	if len(chapters) != 0 || len(toc) != 1 || toc[0] != "1.0" {
+		t.Fatalf("sub only %#v", body)
+	}
+
+	req, err = http.NewRequest(http.MethodPut, ts.URL+"/api/chapters/read", strings.NewReader(`{"tocKey":"9.9","read":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	bad, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad toc: %d", bad.StatusCode)
+	}
+
+	req, err = http.NewRequest(http.MethodPut, ts.URL+"/api/chapters/read", strings.NewReader(`{"chapterIndex":1,"read":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	whole, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer whole.Body.Close()
+	if err := json.NewDecoder(whole.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	chapters, _ = body["readChapters"].([]any)
+	toc, _ = body["readTOC"].([]any)
+	if len(chapters) != 1 || chapters[0] != float64(1) || len(toc) != 0 {
+		t.Fatalf("chapter subsumes toc %#v", body)
+	}
+
+	req, err = http.NewRequest(http.MethodPut, ts.URL+"/api/chapters/read", strings.NewReader(`{"tocKey":"1.0","read":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	out, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Body.Close()
+	if err := json.NewDecoder(out.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	chapters, _ = body["readChapters"].([]any)
+	toc, _ = body["readTOC"].([]any)
+	if len(chapters) != 0 || len(toc) != 2 || toc[0] != "1" || toc[1] != "1.1" {
+		t.Fatalf("unmark sub keeps siblings %#v", body)
+	}
+}
+
 func TestOpenLastBook(t *testing.T) {
 	st := testStore(t)
 	if OpenLast(st) != nil {
@@ -1979,5 +2067,96 @@ func TestDriveAPI(t *testing.T) {
 	drv, _ = synced["drive"].(map[string]any)
 	if drv["connected"] == true {
 		t.Fatalf("still connected %#v", drv)
+	}
+}
+
+func TestLibraryCoversStayWithTheirBooks(t *testing.T) {
+	st := testStore(t)
+	coverA, err := st.SaveCover("id:uuid", "image/jpeg", []byte("cover-interview"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(store.Entry{
+		Key: "id:uuid", Title: "Интервью", Author: "Шао", Cover: coverA, Format: "epub",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.AddWorkspace("Golang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SwitchWorkspace(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	coverB, err := st.SaveCover("id:uuid", "image/jpeg", []byte("cover-golang"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Remember(store.Entry{
+		Key: "id:uuid", Title: "100 ошибок Go", Author: "Харшани", Cover: coverB, Format: "epub",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
+	srv := New(st, fs.FS(ui), nil)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	res, err := http.Get(ts.URL + "/api/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var state map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	lib, _ := state["library"].([]any)
+	if len(lib) != 1 {
+		t.Fatalf("library %#v", lib)
+	}
+	item, _ := lib[0].(map[string]any)
+	goURL, _ := item["coverUrl"].(string)
+	if goURL == "" || strings.Contains(goURL, "key=") {
+		t.Fatalf("go cover url %q", goURL)
+	}
+
+	res, err = http.Get(ts.URL + goURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || string(got) != "cover-golang" {
+		t.Fatalf("go cover %d %s", res.StatusCode, got)
+	}
+
+	search, err := http.Get(ts.URL + "/api/library/search?q=" + url.QueryEscape("Интервью"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer search.Body.Close()
+	var found map[string]any
+	if err := json.NewDecoder(search.Body).Decode(&found); err != nil {
+		t.Fatal(err)
+	}
+	hits, _ := found["hits"].([]any)
+	if len(hits) != 1 {
+		t.Fatalf("hits %#v", found)
+	}
+	hit, _ := hits[0].(map[string]any)
+	mlURL, _ := hit["coverUrl"].(string)
+	if mlURL == "" || mlURL == goURL {
+		t.Fatalf("interview cover url %q go %q", mlURL, goURL)
+	}
+	res, err = http.Get(ts.URL + mlURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || string(got) != "cover-interview" {
+		t.Fatalf("interview cover %d %s", res.StatusCode, got)
 	}
 }
