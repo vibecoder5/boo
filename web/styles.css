@@ -1708,6 +1708,38 @@ body.reading .topbar:focus-within {
   width: min(560px, 100%);
 }
 
+.dlg-card.file-props-dlg {
+  width: min(520px, 100%);
+}
+
+.file-props {
+  margin: 16px 0 0;
+}
+
+.file-prop {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.file-prop .label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.file-prop .value {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 520px) {
+  .file-prop {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
 .dlg-card.read-stats-dlg .read-stats {
   grid-template-columns: 1fr 1fr;
 }
