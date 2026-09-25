@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -2159,4 +2160,144 @@ func TestLibraryCoversStayWithTheirBooks(t *testing.T) {
 	if res.StatusCode != 200 || string(got) != "cover-interview" {
 		t.Fatalf("interview cover %d %s", res.StatusCode, got)
 	}
+}
+
+func TestLibraryFileAPI(t *testing.T) {
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
+	srv := New(testStore(t), fs.FS(ui), nil)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	res, err := http.Get(ts.URL + "/api/library/file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "книга не найдена") {
+		t.Fatalf("empty: %d %s", res.StatusCode, body)
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "notes.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write([]byte("Глава\n\nОбычный текст для свойств файла.\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	res, err = http.Post(ts.URL+"/api/open", mw.FormDataContentType(), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != 200 {
+		body, _ = io.ReadAll(res.Body)
+		res.Body.Close()
+		t.Fatalf("open: %d %s", res.StatusCode, body)
+	}
+	var state map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		res.Body.Close()
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	book, _ := state["book"].(map[string]any)
+	key, _ := book["key"].(string)
+	if key == "" {
+		t.Fatalf("book %#v", state["book"])
+	}
+
+	props := getFileProps(t, ts.URL, key)
+	name, _ := props["name"].(string)
+	path, _ := props["path"].(string)
+	size, _ := props["size"].(float64)
+	if props["bundled"] != false || props["missing"] != false || props["format"] != "txt" {
+		t.Fatalf("props %#v", props)
+	}
+	if name == "" || !strings.HasSuffix(name, ".txt") || !strings.Contains(path, name) || size <= 0 || props["modified"] == "" {
+		t.Fatalf("file %#v", props)
+	}
+	current := getFileProps(t, ts.URL, "")
+	if current["name"] != name {
+		t.Fatalf("current %#v", current)
+	}
+
+	res, err = http.Post(ts.URL+"/api/close", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	gone := getFileProps(t, ts.URL, key)
+	if gone["missing"] != true || gone["name"] != name {
+		t.Fatalf("missing %#v", gone)
+	}
+	if _, ok := gone["size"]; ok {
+		t.Fatalf("size still set %#v", gone)
+	}
+
+	res, err = http.Get(ts.URL + "/api/library/file?key=" + url.QueryEscape("file:no-such-book"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "книга не найдена") {
+		t.Fatalf("unknown: %d %s", res.StatusCode, body)
+	}
+
+	res, err = http.Post(ts.URL+"/api/demo", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != 200 {
+		body, _ = io.ReadAll(res.Body)
+		res.Body.Close()
+		t.Fatalf("demo: %d %s", res.StatusCode, body)
+	}
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		res.Body.Close()
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	book, _ = state["book"].(map[string]any)
+	demoKey, _ := book["key"].(string)
+	demo := getFileProps(t, ts.URL, demoKey)
+	if demo["bundled"] != true || demo["format"] != "demo" {
+		t.Fatalf("demo %#v", demo)
+	}
+	if _, ok := demo["name"]; ok {
+		t.Fatalf("demo has file %#v", demo)
+	}
+	if _, ok := demo["path"]; ok {
+		t.Fatalf("demo has path %#v", demo)
+	}
+}
+
+func getFileProps(t *testing.T, base, key string) map[string]any {
+	t.Helper()
+	u := base + "/api/library/file"
+	if key != "" {
+		u += "?key=" + url.QueryEscape(key)
+	}
+	res, err := http.Get(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("file %s: %d %s", key, res.StatusCode, body)
+	}
+	var props map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&props); err != nil {
+		t.Fatal(err)
+	}
+	return props
 }

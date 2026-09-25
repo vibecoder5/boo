@@ -374,6 +374,7 @@
         <button type="button" class="ctx-item" id="ctxFinished">Отметить прочитанной</button>
         <button type="button" class="ctx-item" id="ctxBookNote">Описание и заметка</button>
         <button type="button" class="ctx-item" id="ctxTodo">Список дел</button>
+        <button type="button" class="ctx-item" id="ctxFileProps">Свойства файла</button>
       </div>
       <p class="ctx-label">Глава</p>
       <div class="ctx-list">
@@ -424,6 +425,7 @@
       <button type="button" class="ctx-item" id="shelfCtxFinished">Отметить прочитанной</button>
       <button type="button" class="ctx-item" id="shelfCtxNote">Описание и заметка</button>
       <button type="button" class="ctx-item" id="shelfCtxTodo">Список дел</button>
+      <button type="button" class="ctx-item" id="shelfCtxFileProps">Свойства файла</button>
     </div>
     <p class="ctx-label">В список для чтения</p>
     <div class="ctx-list" id="shelfCtxLists"></div>
@@ -504,6 +506,20 @@
       </div>
       <p class="stats-hint">Сумма остановок таймера по этой книге. Текущий отсчёт не входит.</p>
       <div class="read-stats" id="bookReadStatsGrid"></div>
+    </div>
+  </div>
+  <div class="dlg" id="filePropsDlg" hidden>
+    <div class="dlg-backdrop" id="filePropsBackdrop"></div>
+    <div class="dlg-card file-props-dlg" role="dialog" aria-modal="true" aria-labelledby="filePropsTitle">
+      <div class="dlg-head">
+        <div>
+          <p class="eyebrow">Файл</p>
+          <h2 id="filePropsTitle">Свойства</h2>
+        </div>
+        <button class="icon-btn" id="filePropsClose" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <div class="file-props" id="filePropsList"></div>
+      <p class="stats-hint" id="filePropsHint" hidden></p>
     </div>
   </div>
   <div class="dlg" id="todoDlg" hidden>

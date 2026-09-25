@@ -2325,6 +2325,113 @@ function closeBookNoteDlg(skipSave) {
   syncBookNoteFields(false);
 }
 
+let filePropsToken = 0;
+let filePropsKey = "";
+
+function filePropsDlgOpen() {
+  const dlg = $("filePropsDlg");
+  return Boolean(dlg && !dlg.hidden);
+}
+
+function closeFileProps() {
+  filePropsToken += 1;
+  filePropsKey = "";
+  const dlg = $("filePropsDlg");
+  if (dlg) dlg.hidden = true;
+}
+
+function formatFileSize(n) {
+  const units = ["Б", "КБ", "МБ", "ГБ"];
+  let v = Number(n);
+  if (!Number.isFinite(v) || v < 0) v = 0;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  const text = i === 0
+    ? String(Math.round(v))
+    : new Intl.NumberFormat("ru", { maximumFractionDigits: 1 }).format(v);
+  return `${text} ${units[i]}`;
+}
+
+function formatFileTime(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("ru", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(d);
+}
+
+function filePropRow(label, value) {
+  const row = document.createElement("div");
+  row.className = "file-prop";
+  const lab = document.createElement("span");
+  lab.className = "label";
+  lab.textContent = label;
+  const val = document.createElement("span");
+  val.className = "value";
+  val.textContent = value;
+  row.append(lab, val);
+  return row;
+}
+
+function paintFileProps(data) {
+  const list = $("filePropsList");
+  const hint = $("filePropsHint");
+  if (!list || !hint) return;
+  list.replaceChildren();
+  $("filePropsTitle").textContent = data.title || "Свойства";
+  const rows = [];
+  if (data.author) rows.push(["Автор", data.author]);
+  rows.push(["Формат", formatLabel(data.format)]);
+  if (data.name) rows.push(["Имя файла", data.name]);
+  if (!data.bundled && !data.missing && typeof data.size === "number") {
+    rows.push(["Размер", formatFileSize(data.size)]);
+  }
+  const modified = data.modified ? formatFileTime(data.modified) : "";
+  if (modified) rows.push(["Изменён", modified]);
+  if (data.path) rows.push(["Расположение", data.path]);
+  for (const [label, value] of rows) list.appendChild(filePropRow(label, value));
+  let note = "";
+  if (data.bundled) note = "Эта книга встроена в программу, отдельного файла нет.";
+  else if (data.missing) note = "Копия в библиотеке не найдена.";
+  hint.hidden = !note;
+  hint.textContent = note;
+}
+
+async function openFileProps(key) {
+  if (!key) return;
+  hideCtx();
+  const dlg = $("filePropsDlg");
+  const list = $("filePropsList");
+  const hint = $("filePropsHint");
+  if (!dlg || !list || !hint) return;
+  const token = filePropsToken + 1;
+  filePropsToken = token;
+  filePropsKey = key;
+  const known = (state.library || []).find((item) => item.key === key) || (state.book && state.book.key === key ? state.book : null);
+  $("filePropsTitle").textContent = (known && known.title) || "Свойства";
+  list.replaceChildren();
+  hint.hidden = false;
+  hint.textContent = "Читаю файл…";
+  dlg.hidden = false;
+  try {
+    const data = await api(`/api/library/file?key=${encodeURIComponent(key)}`);
+    if (token !== filePropsToken || dlg.hidden) return;
+    paintFileProps(data);
+  } catch (err) {
+    if (token !== filePropsToken || dlg.hidden) return;
+    list.replaceChildren();
+    hint.hidden = false;
+    hint.textContent = (err && err.message && err.message.trim()) || "Не удалось прочитать свойства файла";
+  }
+}
+
 function hideShelfCtx() {
   const menu = $("shelfCtx");
   if (menu) menu.hidden = true;
@@ -3696,6 +3803,9 @@ async function applyState(payload, restore) {
     if (!still) closeTodoDlg();
     else if (state.todoBook && state.todoBook.key === dlgKey) state.todoDlgTodos = state.todos;
   }
+  if (filePropsDlgOpen() && (!filePropsKey || !(payload.library || []).some((item) => item.key === filePropsKey))) {
+    closeFileProps();
+  }
   state.activeNoteId = "";
   state.tocFold = payload.tocFold || [];
   state.readChapters = payload.readChapters || [];
@@ -3812,6 +3922,15 @@ $("ctxTodo").addEventListener("click", () => {
   hideCtx();
   if (state.book) openTodoDlg(state.book.key);
 });
+$("shelfCtxFileProps").addEventListener("click", () => {
+  const key = state.shelfCtxKey;
+  if (key) openFileProps(key);
+});
+$("ctxFileProps").addEventListener("click", () => {
+  if (state.book) openFileProps(state.book.key);
+});
+$("filePropsClose").addEventListener("click", closeFileProps);
+$("filePropsBackdrop").addEventListener("click", closeFileProps);
 $("todoDlgClose").addEventListener("click", () => closeTodoDlg());
 $("todoBackdrop").addEventListener("click", () => closeTodoDlg());
 bindTodoForm("welcomeTodoForm", "welcomeTodoText", "welcomeTodoDate", "welcomeTodoTime", () => state.todoBook && state.todoBook.key);
@@ -4678,6 +4797,11 @@ window.addEventListener("keydown", (e) => {
     }
     if (readStatsDlgOpen()) {
       closeReadStatsDlg();
+      e.preventDefault();
+      return;
+    }
+    if (filePropsDlgOpen()) {
+      closeFileProps();
       e.preventDefault();
       return;
     }
