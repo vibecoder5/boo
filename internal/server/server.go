@@ -10,9 +10,11 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"boo/docs"
 	"boo/internal/dict"
@@ -108,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/dictionaries/lookup", s.handleDictionaryLookup)
 	mux.HandleFunc("DELETE /api/library", s.handleLibraryDelete)
 	mux.HandleFunc("GET /api/library/cover", s.handleLibraryCover)
+	mux.HandleFunc("GET /api/library/file", s.handleLibraryFile)
 	mux.HandleFunc("GET /api/library/search", s.handleLibrarySearch)
 	mux.HandleFunc("GET /api/export", s.handleExport)
 	mux.HandleFunc("POST /api/import", s.handleImport)
@@ -1575,6 +1578,53 @@ func (s *Server) remember(book *epub.Book) error {
 		ScrollRatio:  p.ScrollRatio,
 		ChapterN:     len(book.Chapters),
 	})
+}
+
+func (s *Server) handleLibraryFile(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(r.URL.Query().Get("key"))
+	if key == "" {
+		if book := s.current(); book != nil {
+			key = book.Key
+		}
+	}
+	if key == "" {
+		http.Error(w, "книга не найдена", http.StatusNotFound)
+		return
+	}
+	e, ok := s.store.Entry(key)
+	if !ok {
+		http.Error(w, "книга не найдена", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, bookFilePayload(e))
+}
+
+func bookFilePayload(e store.Entry) map[string]any {
+	out := map[string]any{
+		"key":     e.Key,
+		"title":   e.Title,
+		"author":  e.Author,
+		"format":  e.Format,
+		"bundled": bundledBook(e),
+	}
+	if bundledBook(e) {
+		return out
+	}
+	if strings.TrimSpace(e.Path) == "" {
+		out["missing"] = true
+		return out
+	}
+	out["path"] = e.Path
+	out["name"] = filepath.Base(e.Path)
+	info, err := os.Stat(e.Path)
+	if err != nil || info.IsDir() {
+		out["missing"] = true
+		return out
+	}
+	out["missing"] = false
+	out["size"] = info.Size()
+	out["modified"] = info.ModTime().UTC().Format(time.RFC3339)
+	return out
 }
 
 func (s *Server) libraryPayload() []map[string]any {
