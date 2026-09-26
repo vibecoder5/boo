@@ -72,6 +72,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/history", s.handleAddHistory)
 	mux.HandleFunc("POST /api/history/session", s.handleHistorySession)
 	mux.HandleFunc("POST /api/history/read-time", s.handleHistoryReadTime)
+	mux.HandleFunc("POST /api/game/timer-start", s.handleGameTimerStart)
+	mux.HandleFunc("POST /api/game/ack", s.handleGameAck)
 	mux.HandleFunc("GET /api/undo", s.handleUndoLog)
 	mux.HandleFunc("POST /api/undo", s.handleUndoLast)
 	mux.HandleFunc("POST /api/undo/restore", s.handleUndoRestore)
@@ -176,6 +178,11 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	todoBook, todos := s.todoState(book)
 	payload["todoBook"] = todoBook
 	payload["todos"] = todos
+	bookKey := ""
+	if book != nil {
+		bookKey = book.Key
+	}
+	payload["game"] = s.store.TouchGame(bookKey)
 	writeJSON(w, payload)
 }
 
@@ -332,6 +339,10 @@ func (s *Server) handleDeleteTodo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeHistory(w http.ResponseWriter) {
+	s.writeHistoryGame(w, nil)
+}
+
+func (s *Server) writeHistoryGame(w http.ResponseWriter, game *store.GameView) {
 	payload := map[string]any{
 		"history":       s.store.History(10),
 		"readStats":     s.store.ReadStats(""),
@@ -340,7 +351,27 @@ func (s *Server) writeHistory(w http.ResponseWriter) {
 	if book := s.current(); book != nil {
 		payload["bookReadStats"] = s.store.ReadStats(book.Key)
 	}
+	if game != nil {
+		payload["game"] = game
+	}
 	writeJSON(w, payload)
+}
+
+func (s *Server) handleGameTimerStart(w http.ResponseWriter, r *http.Request) {
+	view := s.store.AwardTimerStart()
+	writeJSON(w, map[string]any{"game": view})
+}
+
+func (s *Server) handleGameAck(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Level int `json:"level"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	view := s.store.AckLevel(body.Level)
+	writeJSON(w, map[string]any{"game": view})
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
@@ -535,7 +566,8 @@ func (s *Server) handleHistoryReadTime(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.writeHistory(w)
+	view := s.store.AwardReadTime()
+	s.writeHistoryGame(w, &view)
 }
 
 func (s *Server) handleUndoLog(w http.ResponseWriter, r *http.Request) {
@@ -653,6 +685,7 @@ func (s *Server) handleSaveProgress(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ChapterIndex int     `json:"chapterIndex"`
 		ScrollRatio  float64 `json:"scrollRatio"`
+		Screens      float64 `json:"screens"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -678,7 +711,8 @@ func (s *Server) handleSaveProgress(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]string{"ok": "1"})
+	view := s.store.TrackPages(book.Key, body.ChapterIndex, body.ScrollRatio, body.Screens)
+	writeJSON(w, map[string]any{"ok": "1", "game": view})
 }
 
 func (s *Server) handleAddBookmark(w http.ResponseWriter, r *http.Request) {
@@ -868,9 +902,11 @@ func (s *Server) handleAddNote(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	view := s.store.AwardDailyNote("", body.Body)
 	writeJSON(w, map[string]any{
 		"note":  note,
 		"notes": s.store.Notes(book.Key),
+		"game":  view,
 	})
 }
 
@@ -884,6 +920,15 @@ func (s *Server) handleUpdateNote(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
+	prev := ""
+	if book := s.current(); book != nil {
+		for _, n := range s.store.Notes(book.Key) {
+			if n.ID == body.ID {
+				prev = n.Body
+				break
+			}
+		}
+	}
 	note, err := s.store.UpdateNote(body.ID, body.Color, body.Body)
 	if err != nil {
 		http.Error(w, "заметка не найдена", http.StatusNotFound)
@@ -894,9 +939,11 @@ func (s *Server) handleUpdateNote(w http.ResponseWriter, r *http.Request) {
 	if book != nil {
 		list = s.store.Notes(book.Key)
 	}
+	view := s.store.AwardDailyNote(prev, body.Body)
 	writeJSON(w, map[string]any{
 		"note":  note,
 		"notes": list,
+		"game":  view,
 	})
 }
 
@@ -982,7 +1029,11 @@ func (s *Server) handleSetChapterRead(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"readChapters": list, "readTOC": s.store.ReadTOC(book.Key)})
+	payload := map[string]any{"readChapters": list, "readTOC": s.store.ReadTOC(book.Key)}
+	if body.Read {
+		payload["game"] = s.store.AwardChapter(book.Key, body.ChapterIndex)
+	}
+	writeJSON(w, payload)
 }
 
 func (s *Server) handleSaveUI(w http.ResponseWriter, r *http.Request) {
@@ -1682,6 +1733,10 @@ func (s *Server) handleSetBookMeta(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "key required", http.StatusBadRequest)
 		return
 	}
+	prevJournal := ""
+	if e, ok := s.store.Entry(key); ok {
+		prevJournal = e.Journal
+	}
 	if err := s.store.SetBookMeta(key, body.Description, body.Journal); err != nil {
 		if err == os.ErrNotExist {
 			http.Error(w, "книга не найдена", http.StatusNotFound)
@@ -1689,6 +1744,9 @@ func (s *Server) handleSetBookMeta(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if store.NoteTextChanged(prevJournal, body.Journal) {
+		s.store.RememberDailyNote()
 	}
 	s.handleState(w, r)
 }

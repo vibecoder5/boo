@@ -22,7 +22,7 @@
               <button class="text-btn" id="importBtn" type="button">Импорт</button>
             </div>
           </div>
-          <p class="transfer-hint">Архив включает книги, обложки, словари, фон экрана, прогресс, закладки, заметки, списки и настройки. Импорт заменит текущую библиотеку.</p>
+          <p class="transfer-hint">Архив включает книги, обложки, словари, фон экрана, прогресс, закладки, заметки, списки, настройки и очки. Импорт заменит текущую библиотеку.</p>
           <input id="importInput" type="file" accept=".zip,application/zip" hidden>
           <div class="drive-box" id="driveBox">
             <div class="bookmarks-head">
@@ -83,6 +83,14 @@
                 </label>
                 <button class="text-btn" id="welcomeBgClear" type="button" hidden>Убрать</button>
               </div>
+            </div>
+            <div class="font-pref">
+              <p class="eyebrow">Очки</p>
+              <label class="game-switch">
+                <input id="gameEnabled" type="checkbox" checked>
+                <span>Очки и уровни</span>
+              </label>
+              <p class="font-preview ui">Заход, книги, таймер и главы дают очки. Выключение останавливает набор — уже набранное остаётся.</p>
             </div>
           </div>
         </section>
@@ -201,6 +209,7 @@
           <div class="shelf-head-lead">
             <button class="text-btn shelf-back" id="listBackBtn" type="button" hidden>← Полка</button>
             <p class="eyebrow" id="shelfLabel">Полка</p>
+            <p class="shelf-game" id="shelfGame" hidden></p>
           </div>
           <div class="shelf-search" id="shelfSearch">
             <input id="shelfSearchInput" type="search" placeholder="Найти книгу…" autocomplete="off" aria-label="Найти книгу">
@@ -213,6 +222,20 @@
 
       <section class="welcome" id="welcome">
         <div class="welcome-split">
+          <section class="workspaces game-box" id="gameBox" hidden>
+            <div class="workspaces-head">
+              <div>
+                <p class="eyebrow">Читатель</p>
+                <h2 class="workspaces-title" id="gameLevel">Уровень 1</h2>
+              </div>
+              <p class="game-points" id="gamePoints">0 очков</p>
+            </div>
+            <p class="stats-hint" id="gameMonth"></p>
+            <div class="game-level-track" id="gameLevelTrack" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Прогресс уровня">
+              <i id="gameLevelFill"></i>
+            </div>
+            <ul class="game-tasks" id="gameTasks"></ul>
+          </section>
           <section class="workspaces stats-box" id="welcomeReadStats">
             <div class="workspaces-head">
               <div>
@@ -545,6 +568,15 @@
       <i id="progressFill"></i>
     </button>
     <p class="progress-meta" id="progressMeta">0%</p>
+  </div>
+  <div class="dlg" id="levelUpDlg" hidden>
+    <div class="dlg-backdrop" id="levelUpBackdrop"></div>
+    <div class="dlg-card level-up-dlg" role="dialog" aria-modal="true" aria-labelledby="levelUpTitle">
+      <p class="eyebrow">Читатель</p>
+      <h2 id="levelUpTitle">Новый уровень</h2>
+      <p class="level-up-text" id="levelUpText"></p>
+      <button class="primary-btn" id="levelUpOk" type="button">Хорошо</button>
+    </div>
   </div>
   <script src="/static/app.js"></script>
 </body>

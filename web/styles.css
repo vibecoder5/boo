@@ -1309,7 +1309,8 @@ body.has-welcome-bg:not(.reading) .welcome {
 
 body.has-welcome-bg:not(.reading) .welcome .todo-box,
 body.has-welcome-bg:not(.reading) .welcome .history-box,
-body.has-welcome-bg:not(.reading) .welcome .stats-box {
+body.has-welcome-bg:not(.reading) .welcome .stats-box,
+body.has-welcome-bg:not(.reading) .welcome .game-box {
   padding: 16px 18px 18px;
   background: color-mix(in srgb, var(--paper) 88%, transparent);
   border: 1px solid var(--line);
@@ -1661,7 +1662,8 @@ body.reading .topbar:focus-within {
   min-width: 0;
 }
 
-.welcome-split > .stats-box {
+.welcome-split > .stats-box,
+.welcome-split > .game-box {
   grid-column: 1 / -1;
 }
 
@@ -1964,6 +1966,100 @@ body.workspace-sorting .workspacesbar .workspace-card {
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+
+.shelf-game {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.game-points {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.game-level-track {
+  height: 8px;
+  margin-top: 14px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.game-level-track i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+}
+
+.game-tasks {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.game-task {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.game-task-mark {
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.game-task.done .game-task-mark {
+  color: var(--accent);
+}
+
+.game-task-title {
+  min-width: 0;
+}
+
+.game-task-progress {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.game-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+.game-switch input {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+}
+
+.level-up-dlg {
+  width: min(420px, 100%);
+}
+
+.level-up-text {
+  margin: 8px 0 18px;
+  font-family: var(--serif);
+  font-size: 28px;
 }
 
 .shelf-back {

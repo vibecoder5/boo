@@ -26,6 +26,7 @@ type Data struct {
 	Workspaces       []Workspace  `json:"workspaces"`
 	CurrentWorkspace string       `json:"currentWorkspace"`
 	UI               UI           `json:"ui"`
+	Game             Game         `json:"game,omitempty"`
 	Dictionaries     []Dictionary `json:"dictionaries,omitempty"`
 
 	// Устаревшие поля до появления рабочих пространств.
@@ -260,27 +261,28 @@ type Dictionary struct {
 }
 
 type UI struct {
-	Theme             string  `json:"theme"`
-	FontSize          int     `json:"fontSize"`
-	BookFont          string  `json:"bookFont"`
-	BookFontSize      int     `json:"bookFontSize"`
-	UIFont            string  `json:"uiFont"`
-	UIFontSize        int     `json:"uiFontSize"`
-	LineHeight        float64 `json:"lineHeight"`
-	MaxWidth          int     `json:"maxWidth"`
-	SidebarWidth      int     `json:"sidebarWidth"`
-	SidebarOpen       bool    `json:"sidebarOpen"`
-	NotesWidth        int     `json:"notesWidth"`
-	NotesOpen         bool    `json:"notesOpen"`
-	HistoryWidth      int     `json:"historyWidth"`
-	HistoryOpen       bool    `json:"historyOpen"`
-	WorkspacesWidth   int     `json:"workspacesWidth"`
-	WorkspacesOpen    bool    `json:"workspacesOpen"`
-	ListsWidth        int     `json:"listsWidth"`
-	ListsOpen         bool    `json:"listsOpen"`
-	TocCollapsed      bool    `json:"tocCollapsed"`
-	HideReadChapters  bool    `json:"hideReadChapters"`
-	WelcomeBackground string  `json:"welcomeBackground,omitempty"`
+	Theme                string  `json:"theme"`
+	FontSize             int     `json:"fontSize"`
+	BookFont             string  `json:"bookFont"`
+	BookFontSize         int     `json:"bookFontSize"`
+	UIFont               string  `json:"uiFont"`
+	UIFontSize           int     `json:"uiFontSize"`
+	LineHeight           float64 `json:"lineHeight"`
+	MaxWidth             int     `json:"maxWidth"`
+	SidebarWidth         int     `json:"sidebarWidth"`
+	SidebarOpen          bool    `json:"sidebarOpen"`
+	NotesWidth           int     `json:"notesWidth"`
+	NotesOpen            bool    `json:"notesOpen"`
+	HistoryWidth         int     `json:"historyWidth"`
+	HistoryOpen          bool    `json:"historyOpen"`
+	WorkspacesWidth      int     `json:"workspacesWidth"`
+	WorkspacesOpen       bool    `json:"workspacesOpen"`
+	ListsWidth           int     `json:"listsWidth"`
+	ListsOpen            bool    `json:"listsOpen"`
+	TocCollapsed         bool    `json:"tocCollapsed"`
+	HideReadChapters     bool    `json:"hideReadChapters"`
+	WelcomeBackground    string  `json:"welcomeBackground,omitempty"`
+	GamificationDisabled bool    `json:"gamificationDisabled,omitempty"`
 }
 
 func Open() (*Store, error) {

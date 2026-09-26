@@ -30,7 +30,8 @@ const state = {
   openedListId: "",
   shelfCtxKey: "",
   bookNoteKey: "",
-  ui: { theme: "dark", fontSize: 20, bookFont: "serif", bookFontSize: 20, uiFont: "system", uiFontSize: 16, lineHeight: 1.7, maxWidth: 38, sidebarWidth: 280, sidebarOpen: true, notesWidth: 300, notesOpen: true, historyWidth: 280, historyOpen: false, workspacesWidth: 280, workspacesOpen: true, listsWidth: 280, listsOpen: true, welcomeBackground: "" },
+  ui: { theme: "dark", fontSize: 20, bookFont: "serif", bookFontSize: 20, uiFont: "system", uiFontSize: 16, lineHeight: 1.7, maxWidth: 38, sidebarWidth: 280, sidebarOpen: true, notesWidth: 300, notesOpen: true, historyWidth: 280, historyOpen: false, workspacesWidth: 280, workspacesOpen: true, listsWidth: 280, listsOpen: true, welcomeBackground: "", gamificationDisabled: false },
+  game: null,
   history: [],
   undo: [],
   readStats: { todaySec: 0, weekSec: 0, monthSec: 0, totalSec: 0, today: "0 с", week: "0 с", month: "0 с", total: "0 с" },
@@ -69,6 +70,8 @@ const readTimer = {
   bookKey: "",
   tick: 0,
 };
+
+let shownLevelUp = 0;
 
 const $ = (id) => document.getElementById(id);
 
@@ -344,6 +347,9 @@ function applyUI() {
   applyTocFold();
   paintTocHideRead();
   applyWelcomeBackground();
+  const gameToggle = $("gameEnabled");
+  if (gameToggle) gameToggle.checked = !state.ui.gamificationDisabled;
+  renderGame();
 }
 
 function welcomeBackgroundUrl(name) {
@@ -448,18 +454,28 @@ function scheduleSave() {
   saveTimer = setTimeout(saveProgress, 350);
 }
 
+function readerScreens() {
+  const el = $("reader");
+  if (!el || el.hidden) return 0;
+  const pageH = el.clientHeight;
+  if (pageH < 40) return 0;
+  return el.scrollHeight / pageH;
+}
+
 async function saveProgress() {
   if (!state.book || state.saving) return;
   state.saving = true;
   try {
-    await api("/api/progress", {
+    const data = await api("/api/progress", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chapterIndex: state.chapterIndex,
         scrollRatio: scrollRatio(),
+        screens: readerScreens(),
       }),
     });
+    applyGame(data);
   } finally {
     state.saving = false;
   }
@@ -876,6 +892,7 @@ async function setChapterRead(index, read, tocKey) {
     body: JSON.stringify(body),
   });
   applyReadMarks(data);
+  applyGame(data);
   refreshTOC();
   paintChapterRead();
 }
@@ -1655,6 +1672,142 @@ function applyReadStats(payload) {
   renderReadStats();
 }
 
+function pointsWord(n) {
+  const n10 = n % 10;
+  const n100 = n % 100;
+  if (n10 === 1 && n100 !== 11) return "очко";
+  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return "очка";
+  return "очков";
+}
+
+function pointsLabel(n) {
+  const v = Math.max(0, Math.round(Number(n) || 0));
+  return `${v} ${pointsWord(v)}`;
+}
+
+function formatPageCount(hundredths) {
+  const n = Math.max(0, Number(hundredths) || 0) / 100;
+  const tenths = Math.round(n * 10) / 10;
+  if (Math.abs(tenths - Math.round(tenths)) < 0.001) return String(Math.round(tenths));
+  return tenths.toFixed(1).replace(".", ",");
+}
+
+function taskProgressText(task) {
+  if (!task) return "";
+  if (task.kind === "pages") {
+    const shown = Math.min(task.progress || 0, task.goal || 0);
+    return `${formatPageCount(shown)} из ${formatPageCount(task.goal || 0)}`;
+  }
+  return task.done ? "Готово" : "0 из 1";
+}
+
+function gameVisible() {
+  if (state.ui.gamificationDisabled) return false;
+  return Boolean(state.game && state.game.enabled);
+}
+
+function renderGame() {
+  const box = $("gameBox");
+  const shelf = $("shelfGame");
+  const on = gameVisible();
+  if (box) box.hidden = !on;
+  if (shelf) shelf.hidden = !on;
+  if (!on || !state.game) return;
+  const game = state.game;
+  const level = $("gameLevel");
+  const points = $("gamePoints");
+  const month = $("gameMonth");
+  if (level) level.textContent = `Уровень ${game.level || 1}`;
+  if (points) points.textContent = pointsLabel(game.points);
+  if (month) month.textContent = `За месяц: ${pointsLabel(game.monthPoints)}. Всего: ${pointsLabel(game.points)}.`;
+  if (shelf) shelf.textContent = `Уровень ${game.level || 1} · ${pointsLabel(game.points)}`;
+  const span = game.levelSpan || 1;
+  const into = game.intoLevel || 0;
+  const pct = Math.max(0, Math.min(100, Math.round((into / span) * 100)));
+  const fill = $("gameLevelFill");
+  const track = $("gameLevelTrack");
+  if (fill) fill.style.width = `${pct}%`;
+  if (track) {
+    track.setAttribute("aria-valuenow", String(pct));
+    track.title = `${pointsLabel(into)} из ${pointsLabel(span)} до следующего уровня`;
+  }
+  const list = $("gameTasks");
+  if (!list) return;
+  list.replaceChildren();
+  for (const task of game.daily || []) {
+    const row = document.createElement("li");
+    row.className = "game-task";
+    if (task.done) row.classList.add("done");
+    const mark = document.createElement("span");
+    mark.className = "game-task-mark";
+    mark.setAttribute("aria-hidden", "true");
+    mark.textContent = task.done ? "✓" : "·";
+    const title = document.createElement("span");
+    title.className = "game-task-title";
+    title.textContent = task.title || "";
+    const progress = document.createElement("span");
+    progress.className = "game-task-progress";
+    progress.textContent = taskProgressText(task);
+    row.append(mark, title, progress);
+    list.appendChild(row);
+  }
+}
+
+function applyGame(payload) {
+  if (!payload || !payload.game) return;
+  state.game = payload.game;
+  renderGame();
+  if (payload.game.levelUp) showLevelUp(payload.game.levelUp);
+}
+
+function levelUpOpen() {
+  const dlg = $("levelUpDlg");
+  return Boolean(dlg && !dlg.hidden);
+}
+
+function showLevelUp(levelUp) {
+  if (!levelUp || state.ui.gamificationDisabled) return;
+  if (levelUp.level <= shownLevelUp) return;
+  shownLevelUp = levelUp.level;
+  const dlg = $("levelUpDlg");
+  const text = $("levelUpText");
+  if (!dlg || !text) return;
+  text.textContent = levelUp.text || `Новый уровень: ${levelUp.level}`;
+  dlg.hidden = false;
+  ackLevel(levelUp.level);
+}
+
+function closeLevelUp() {
+  const dlg = $("levelUpDlg");
+  if (dlg) dlg.hidden = true;
+}
+
+async function ackLevel(level) {
+  try {
+    const data = await api("/api/game/ack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ level }),
+    });
+    if (data && data.game) {
+      state.game = data.game;
+      renderGame();
+    }
+  } catch (err) {
+    console.warn(err);
+  }
+}
+
+async function awardTimerStart() {
+  if (state.ui.gamificationDisabled) return;
+  try {
+    const data = await api("/api/game/timer-start", { method: "POST" });
+    applyGame(data);
+  } catch (err) {
+    console.warn(err);
+  }
+}
+
 function readStatsDlgOpen() {
   const dlg = $("readStatsDlg");
   return Boolean(dlg && !dlg.hidden);
@@ -1829,6 +1982,7 @@ function startReadTimerTick() {
 function startReadTimer() {
   if (!state.book || !state.book.key) return;
   if (readTimer.status === "running") return;
+  const fresh = readTimer.status !== "paused";
   if (readTimer.status === "paused") {
     readTimer.status = "running";
     readTimer.startedAt = Date.now();
@@ -1840,6 +1994,7 @@ function startReadTimer() {
   }
   startReadTimerTick();
   renderReadTimer();
+  if (fresh) awardTimerStart();
 }
 
 function pauseReadTimer() {
@@ -1886,6 +2041,7 @@ async function commitReadTimer(options) {
       body: JSON.stringify(body),
     });
     applyReadStats(data);
+    applyGame(data);
     return data;
   } catch (err) {
     if (keepOnError) {
@@ -2264,6 +2420,7 @@ async function saveBookMeta(key, silent) {
       }),
     });
     state.library = payload.library || state.library;
+    applyGame(payload);
     if (payload.book && state.book && payload.book.key === state.book.key) {
       state.book.description = payload.book.description || "";
       state.book.journal = payload.book.journal || "";
@@ -3188,7 +3345,7 @@ async function openChapter(index, fragment, resetScroll, query, hitOffset) {
     if (target) target.scrollIntoView();
   }
   setProgress(resetScroll ? 0 : scrollRatio(), index);
-  if (resetScroll) scheduleSave();
+  scheduleSave();
 }
 
 async function addHighlight(color, sel) {
@@ -3563,6 +3720,7 @@ async function addNote(color, sel) {
       }),
     });
     state.notes = data.notes || [];
+    applyGame(data);
     state.activeNoteId = data.note && data.note.id ? data.note.id : "";
     refreshChapter();
     window.getSelection()?.removeAllRanges();
@@ -3593,6 +3751,7 @@ async function updateNote(id, patch, silent) {
       }),
     });
     state.notes = data.notes || [];
+    applyGame(data);
     if (data.note && data.note.id) state.activeNoteId = data.note.id;
     if (!silent) {
       refreshChapter();
@@ -3709,6 +3868,7 @@ async function applyState(payload, restore) {
   renderSearchResults([]);
   if (payload.ui) state.ui = payload.ui;
   if (payload.drive) renderDrive(payload.drive);
+  applyGame(payload);
   applyUI();
   if (bookNoteOpen() && state.bookNoteKey) {
     const still = (payload.library || []).some((item) => item.key === state.bookNoteKey);
@@ -4310,6 +4470,31 @@ $("readTimerPause").addEventListener("click", pauseReadTimer);
 $("readTimerStop").addEventListener("click", () => stopReadTimer());
 $("readTimerStats").addEventListener("click", openReadStatsDlg);
 $("readStatsClose").addEventListener("click", closeReadStatsDlg);
+$("levelUpOk").addEventListener("click", closeLevelUp);
+$("levelUpBackdrop").addEventListener("click", closeLevelUp);
+$("gameEnabled").addEventListener("change", async () => {
+  const box = $("gameEnabled");
+  state.ui.gamificationDisabled = !box.checked;
+  try {
+    await saveUI();
+  } catch (err) {
+    state.ui.gamificationDisabled = !state.ui.gamificationDisabled;
+    applyUI();
+    alert(err.message || "Не удалось сохранить настройку");
+    return;
+  }
+  renderGame();
+  if (!state.ui.gamificationDisabled) {
+    try {
+      const payload = await api("/api/state");
+      if (payload.ui) state.ui = payload.ui;
+      applyUI();
+      applyGame(payload);
+    } catch (err) {
+      console.warn(err);
+    }
+  }
+});
 $("readStatsBackdrop").addEventListener("click", closeReadStatsDlg);
 $("closeHistory").addEventListener("click", () => setHistoryOpen(false));
 $("historyRail").addEventListener("click", () => setHistoryOpen(true));
@@ -4656,6 +4841,11 @@ window.addEventListener("drop", (e) => {
 
 window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
+    if (levelUpOpen()) {
+      closeLevelUp();
+      e.preventDefault();
+      return;
+    }
     if ($("noteTip") && !$("noteTip").hidden) {
       hideNoteTip();
       e.preventDefault();

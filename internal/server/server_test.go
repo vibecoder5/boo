@@ -2160,3 +2160,101 @@ func TestLibraryCoversStayWithTheirBooks(t *testing.T) {
 		t.Fatalf("interview cover %d %s", res.StatusCode, got)
 	}
 }
+
+func TestGameStateAndTimer(t *testing.T) {
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("ok")}}
+	srv := New(testStore(t), fs.FS(ui), nil)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	res, err := http.Get(ts.URL + "/api/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var state map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	game, _ := state["game"].(map[string]any)
+	if game["enabled"] != true || game["points"].(float64) != 10 || game["level"].(float64) != 1 {
+		t.Fatalf("visit %#v", game)
+	}
+	daily, _ := game["daily"].([]any)
+	if len(daily) != 2 {
+		t.Fatalf("daily %#v", game["daily"])
+	}
+
+	res, err = http.Get(ts.URL + "/api/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	state = map[string]any{}
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	game = state["game"].(map[string]any)
+	if game["points"].(float64) != 10 {
+		t.Fatalf("second visit %#v", game)
+	}
+
+	res, err = http.Post(ts.URL+"/api/game/timer-start", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var started map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&started); err != nil {
+		t.Fatal(err)
+	}
+	game = started["game"].(map[string]any)
+	if game["points"].(float64) != 15 {
+		t.Fatalf("timer %#v", game)
+	}
+	res, err = http.Post(ts.URL+"/api/game/timer-start", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	started = map[string]any{}
+	if err := json.NewDecoder(res.Body).Decode(&started); err != nil {
+		t.Fatal(err)
+	}
+	if started["game"].(map[string]any)["points"].(float64) != 15 {
+		t.Fatalf("timer twice %#v", started["game"])
+	}
+
+	uiState := state["ui"].(map[string]any)
+	uiState["gamificationDisabled"] = true
+	raw, err := json.Marshal(uiState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPut, ts.URL+"/api/ui", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("ui %d", res.StatusCode)
+	}
+	res, err = http.Get(ts.URL + "/api/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	state = map[string]any{}
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	game = state["game"].(map[string]any)
+	if game["enabled"] != false || game["points"].(float64) != 15 {
+		t.Fatalf("disabled %#v", game)
+	}
+}
