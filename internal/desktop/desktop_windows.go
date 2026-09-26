@@ -39,6 +39,7 @@ func Run(appURL, title string) error {
 		return fmt.Errorf("не удалось открыть окно. Установите Microsoft Edge WebView2 Runtime")
 	}
 	defer w.Destroy()
+	noteWindow(w.Window())
 	w.SetSize(880, 600, webview2.HintMin)
 	showMaximized(w.Window())
 	w.Navigate(appURL)

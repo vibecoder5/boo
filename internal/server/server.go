@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"boo/docs"
+	"boo/internal/desktop"
 	"boo/internal/dict"
 	"boo/internal/drive"
 	"boo/internal/epub"
@@ -32,6 +33,7 @@ type Server struct {
 	ui     fs.FS
 	dictMu sync.Mutex
 	dicts  map[string]*dict.Index
+	scanMu sync.Mutex
 }
 
 func New(st *store.Store, ui fs.FS, book *epub.Book) *Server {
@@ -112,6 +114,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/library/cover", s.handleLibraryCover)
 	mux.HandleFunc("GET /api/library/file", s.handleLibraryFile)
 	mux.HandleFunc("GET /api/library/search", s.handleLibrarySearch)
+	mux.HandleFunc("POST /api/library/scan", s.handleScanFolder)
+	mux.HandleFunc("POST /api/library/scan/add", s.handleScanAdd)
 	mux.HandleFunc("GET /api/export", s.handleExport)
 	mux.HandleFunc("POST /api/import", s.handleImport)
 	mux.HandleFunc("GET /api/drive", s.handleDriveStatus)
@@ -162,6 +166,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		"readChapters":  []int{},
 		"readTOC":       []string{},
 		"dictionaries":  s.store.Dictionaries(),
+		"folderPick":    desktop.CanPickFolder(),
 	}
 	if s.drive != nil {
 		payload["drive"] = s.drive.Status()
