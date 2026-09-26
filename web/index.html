@@ -85,6 +85,13 @@
               </div>
             </div>
             <div class="font-pref">
+              <p class="eyebrow">Новые книги</p>
+              <div class="pref-row">
+                <input id="importWorkspace" type="text" maxlength="80" placeholder="Backlog" aria-label="Пространство для книг из папки" autocomplete="off" spellcheck="false">
+              </div>
+              <p class="font-preview ui">Сканирование папки кладёт выбранные EPUB и FB2 в пространство с этим именем. Если его нет, boo создаст.</p>
+            </div>
+            <div class="font-pref">
               <p class="eyebrow">Очки</p>
               <label class="game-switch">
                 <input id="gameEnabled" type="checkbox" checked>
@@ -215,7 +222,10 @@
             <input id="shelfSearchInput" type="search" placeholder="Найти книгу…" autocomplete="off" aria-label="Найти книгу">
             <div class="shelf-search-results" id="shelfSearchResults" hidden></div>
           </div>
-          <button class="icon-btn shelf-add" id="shelfAddBtn" type="button" aria-label="Добавить книгу" title="Добавить книгу">+</button>
+          <div class="shelf-tools">
+            <button class="text-btn" id="scanFolderBtn" type="button">Из папки</button>
+            <button class="icon-btn shelf-add" id="shelfAddBtn" type="button" aria-label="Добавить книгу" title="Добавить книгу">+</button>
+          </div>
         </div>
         <div class="shelf-grid" id="shelfGrid"></div>
       </section>
@@ -474,8 +484,36 @@
       <p class="add-book-hint">EPUB, FB2, ZIP, TXT или Markdown. Файл копируется в локальную библиотеку.</p>
       <div class="add-book-actions">
         <button class="primary-btn" id="addBookFile" type="button">Выбрать файл</button>
+        <button class="ghost-btn" id="addBookScan" type="button">Из папки</button>
         <button class="ghost-btn" id="addBookDemo" type="button">Демо-книга</button>
         <button class="ghost-btn" id="addBookGuide" type="button">Руководство</button>
+      </div>
+    </div>
+  </div>
+  <div class="dlg" id="scanDlg" hidden>
+    <div class="dlg-backdrop" id="scanBackdrop"></div>
+    <div class="dlg-card scan-dlg" role="dialog" aria-modal="true" aria-labelledby="scanTitle">
+      <div class="dlg-head">
+        <div>
+          <p class="eyebrow">Полка</p>
+          <h2 id="scanTitle">Из папки</h2>
+        </div>
+        <button class="icon-btn" id="scanClose" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <p class="add-book-hint" id="scanHint">EPUB и FB2 из выбранной папки попадут в пространство «Backlog». TXT и Markdown не ищутся.</p>
+      <div class="scan-pick">
+        <button class="primary-btn" id="scanPickBtn" type="button">Выбрать папку</button>
+      </div>
+      <form class="scan-path" id="scanPathForm" hidden>
+        <input id="scanPathInput" type="text" placeholder="Путь к папке" aria-label="Путь к папке" autocomplete="off" spellcheck="false">
+        <button class="primary-btn" type="submit">Сканировать</button>
+      </form>
+      <p class="scan-root" id="scanRoot" hidden></p>
+      <p class="scan-status" id="scanStatus" hidden></p>
+      <div class="scan-list" id="scanList" hidden></div>
+      <div class="add-book-actions">
+        <button class="primary-btn" id="scanAddBtn" type="button" disabled>Добавить</button>
+        <button class="ghost-btn" id="scanCancel" type="button">Закрыть</button>
       </div>
     </div>
   </div>

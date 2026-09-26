@@ -2000,6 +2000,12 @@ body.workspace-sorting .workspacesbar .workspace-card {
   min-width: 0;
 }
 
+.shelf-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .shelf-game {
   margin: 0;
   color: var(--muted);
@@ -2401,6 +2407,93 @@ body.list-view .shelf-grid {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 18px;
+}
+
+.dlg-card.scan-dlg {
+  width: min(560px, 100%);
+}
+
+.scan-pick {
+  margin-top: 16px;
+}
+
+.scan-path {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.scan-path input,
+#importWorkspace {
+  flex: 1 1 180px;
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 80%, transparent);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+
+.scan-path input:focus,
+#importWorkspace:focus {
+  outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.scan-root,
+.scan-status {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.scan-root {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 12px;
+  max-height: min(360px, 46vh);
+  overflow: auto;
+}
+
+.scan-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.scan-row:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.scan-row input {
+  margin-top: 3px;
+}
+
+.scan-row strong {
+  display: block;
+  font-weight: 600;
+}
+
+.scan-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .ctx-list {

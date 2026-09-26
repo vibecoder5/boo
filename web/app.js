@@ -30,7 +30,8 @@ const state = {
   openedListId: "",
   shelfCtxKey: "",
   bookNoteKey: "",
-  ui: { theme: "dark", fontSize: 20, bookFont: "serif", bookFontSize: 20, uiFont: "system", uiFontSize: 16, lineHeight: 1.7, maxWidth: 38, sidebarWidth: 280, sidebarOpen: true, notesWidth: 300, notesOpen: true, historyWidth: 280, historyOpen: false, workspacesWidth: 280, workspacesOpen: true, listsWidth: 280, listsOpen: true, welcomeBackground: "", gamificationDisabled: false },
+  ui: { theme: "dark", fontSize: 20, bookFont: "serif", bookFontSize: 20, uiFont: "system", uiFontSize: 16, lineHeight: 1.7, maxWidth: 38, sidebarWidth: 280, sidebarOpen: true, notesWidth: 300, notesOpen: true, historyWidth: 280, historyOpen: false, workspacesWidth: 280, workspacesOpen: true, listsWidth: 280, listsOpen: true, welcomeBackground: "", gamificationDisabled: false, importWorkspace: "Backlog" },
+  folderPick: null,
   game: null,
   history: [],
   undo: [],
@@ -349,6 +350,7 @@ function applyUI() {
   applyWelcomeBackground();
   const gameToggle = $("gameEnabled");
   if (gameToggle) gameToggle.checked = !state.ui.gamificationDisabled;
+  applyImportWorkspace();
   renderGame();
 }
 
@@ -2743,6 +2745,222 @@ function closeAddBookDlg() {
   if (dlg) dlg.hidden = true;
 }
 
+let scanBooks = [];
+let scanBusy = false;
+let scanToken = 0;
+
+function scanDlgOpen() {
+  const dlg = $("scanDlg");
+  return Boolean(dlg && !dlg.hidden);
+}
+
+function scanWorkspaceName() {
+  const name = (state.ui && state.ui.importWorkspace ? state.ui.importWorkspace : "Backlog").trim();
+  return name || "Backlog";
+}
+
+function applyImportWorkspace() {
+  const input = $("importWorkspace");
+  if (!input || document.activeElement === input) return;
+  input.value = scanWorkspaceName();
+}
+
+function openScanDlg() {
+  const dlg = $("scanDlg");
+  if (!dlg) return;
+  scanToken += 1;
+  scanBusy = false;
+  closeAddBookDlg();
+  closeAddToListDlg();
+  scanBooks = [];
+  const hint = $("scanHint");
+  if (hint) {
+    hint.textContent = `EPUB и FB2 из выбранной папки попадут в пространство «${scanWorkspaceName()}». TXT и Markdown не ищутся.`;
+  }
+  const pick = $("scanPickBtn");
+  if (pick) pick.hidden = state.folderPick === false;
+  const pathBox = $("scanPathForm");
+  if (pathBox) pathBox.hidden = state.folderPick !== false;
+  const list = $("scanList");
+  if (list) {
+    list.hidden = true;
+    list.replaceChildren();
+  }
+  const root = $("scanRoot");
+  if (root) {
+    root.hidden = true;
+    root.textContent = "";
+    root.title = "";
+  }
+  setScanStatus("");
+  const add = $("scanAddBtn");
+  if (add) {
+    add.disabled = true;
+    add.textContent = "Добавить";
+  }
+  dlg.hidden = false;
+  if (state.folderPick === false && $("scanPathInput")) $("scanPathInput").focus();
+  else if (pick) pick.focus();
+}
+
+function closeScanDlg() {
+  const dlg = $("scanDlg");
+  if (dlg) dlg.hidden = true;
+}
+
+function setScanStatus(text) {
+  const el = $("scanStatus");
+  if (!el) return;
+  el.textContent = text || "";
+  el.hidden = !text;
+}
+
+async function runFolderScan(path) {
+  if (scanBusy) return;
+  const token = ++scanToken;
+  scanBusy = true;
+  const pick = $("scanPickBtn");
+  const add = $("scanAddBtn");
+  if (pick) pick.disabled = true;
+  if (add) add.disabled = true;
+  setScanStatus(path ? "Ищем EPUB и FB2…" : "Выберите папку в открывшемся окне.");
+  try {
+    const payload = await api("/api/library/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: path || "" }),
+    });
+    if (token !== scanToken) return;
+    if (payload.cancelled) {
+      setScanStatus("Папка не выбрана.");
+      return;
+    }
+    renderScanBooks(payload);
+  } catch (err) {
+    if (token !== scanToken) return;
+    const pathBox = $("scanPathForm");
+    if (pathBox) pathBox.hidden = false;
+    setScanStatus((err && err.message) || "Не удалось просмотреть папку");
+  } finally {
+    if (token !== scanToken) return;
+    scanBusy = false;
+    if (pick) pick.disabled = false;
+    syncScanAdd();
+  }
+}
+
+function renderScanBooks(payload) {
+  scanBooks = payload.books || [];
+  const ws = payload.workspace || scanWorkspaceName();
+  const root = $("scanRoot");
+  if (root) {
+    root.hidden = !payload.root;
+    root.textContent = payload.root || "";
+    root.title = payload.root || "";
+  }
+  const bits = [];
+  if (!scanBooks.length) bits.push("В папке нет книг EPUB или FB2.");
+  if (payload.truncated) bits.push("Показаны первые 400 книг.");
+  if (payload.unreadable) bits.push(`Не открылись: ${payload.unreadable}.`);
+  setScanStatus(bits.join(" "));
+  const list = $("scanList");
+  if (!list) return;
+  list.hidden = !scanBooks.length;
+  list.replaceChildren();
+  if (!scanBooks.length) {
+    syncScanAdd();
+    return;
+  }
+  const allLabel = document.createElement("label");
+  allLabel.className = "scan-row";
+  const all = document.createElement("input");
+  all.type = "checkbox";
+  all.id = "scanAll";
+  const allText = document.createElement("span");
+  allText.textContent = "Выбрать все";
+  allLabel.append(all, allText);
+  all.addEventListener("change", () => {
+    list.querySelectorAll("input[data-path]").forEach((box) => {
+      box.checked = all.checked;
+    });
+    syncScanAdd();
+  });
+  list.append(allLabel);
+  for (const book of scanBooks) {
+    const label = document.createElement("label");
+    label.className = "scan-row";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.dataset.path = book.path;
+    box.checked = !book.inLibrary;
+    box.addEventListener("change", syncScanAdd);
+    const text = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = book.title || book.name || "Без названия";
+    const meta = document.createElement("span");
+    meta.className = "scan-meta";
+    const parts = [];
+    if (book.author) parts.push(book.author);
+    parts.push(formatLabel(book.format));
+    if (book.name) parts.push(book.name);
+    if (book.inLibrary) parts.push(`уже в «${ws}»`);
+    meta.textContent = parts.join(" · ");
+    text.append(title, meta);
+    label.append(box, text);
+    list.append(label);
+  }
+  syncScanAdd();
+}
+
+function syncScanAdd() {
+  const add = $("scanAddBtn");
+  const boxes = [...document.querySelectorAll("#scanList input[data-path]")];
+  const checked = boxes.filter((box) => box.checked).length;
+  const all = $("scanAll");
+  if (all) {
+    all.checked = boxes.length > 0 && checked === boxes.length;
+    all.indeterminate = checked > 0 && checked < boxes.length;
+  }
+  if (!add) return;
+  add.disabled = scanBusy || checked === 0;
+  add.textContent = checked ? `Добавить (${checked})` : "Добавить";
+}
+
+async function addScannedBooks() {
+  if (scanBusy) return;
+  const paths = [...document.querySelectorAll("#scanList input[data-path]:checked")].map((box) => box.dataset.path);
+  if (!paths.length) return;
+  const token = scanToken;
+  scanBusy = true;
+  syncScanAdd();
+  setScanStatus("Добавляем…");
+  try {
+    const result = await api("/api/library/scan/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths }),
+    });
+    const payload = await api("/api/state");
+    await applyState(payload, Boolean(payload.book));
+    if (token !== scanToken || !scanDlgOpen()) return;
+    const ws = result.workspace || scanWorkspaceName();
+    const bits = [`Добавлено книг: ${result.added}. Пространство «${ws}».`];
+    if (result.skipped) bits.push(`Уже были: ${result.skipped}.`);
+    if (result.failed) bits.push(`Не открылись: ${result.failed}.`);
+    setScanStatus(bits.join(" "));
+    document.querySelectorAll("#scanList input[data-path]:checked").forEach((box) => {
+      box.checked = false;
+    });
+  } catch (err) {
+    if (token !== scanToken) return;
+    setScanStatus((err && err.message) || "Не удалось добавить книги");
+  } finally {
+    if (token !== scanToken) return;
+    scanBusy = false;
+    syncScanAdd();
+  }
+}
+
 function addToListDlgOpen() {
   const dlg = $("addToListDlg");
   return Boolean(dlg && !dlg.hidden);
@@ -3087,6 +3305,7 @@ function showBookChrome() {
   if (hasBook) {
     closeAddBookDlg();
     closeAddToListDlg();
+    closeScanDlg();
   }
   $("reader").hidden = !hasBook;
   $("progressBar").hidden = !hasBook;
@@ -3977,6 +4196,7 @@ async function applyState(payload, restore) {
   if ($("searchInput")) $("searchInput").value = "";
   renderSearchResults([]);
   if (payload.ui) state.ui = payload.ui;
+  if (typeof payload.folderPick === "boolean") state.folderPick = payload.folderPick;
   if (payload.drive) renderDrive(payload.drive);
   applyGame(payload);
   applyUI();
@@ -4466,6 +4686,30 @@ $("addToListFile").addEventListener("click", () => {
 $("addBookFile").addEventListener("click", () => {
   closeAddBookDlg();
   pickBookFile();
+});
+$("addBookScan").addEventListener("click", () => {
+  closeAddBookDlg();
+  openScanDlg();
+});
+$("scanFolderBtn").addEventListener("click", openScanDlg);
+$("scanClose").addEventListener("click", closeScanDlg);
+$("scanBackdrop").addEventListener("click", closeScanDlg);
+$("scanCancel").addEventListener("click", closeScanDlg);
+$("scanPickBtn").addEventListener("click", () => runFolderScan(""));
+$("scanAddBtn").addEventListener("click", addScannedBooks);
+$("scanPathForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  runFolderScan($("scanPathInput").value.trim());
+});
+$("importWorkspace").addEventListener("change", () => {
+  state.ui.importWorkspace = $("importWorkspace").value;
+  saveUI();
+});
+$("importWorkspace").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    e.currentTarget.blur();
+  }
 });
 $("addBookDemo").addEventListener("click", () => {
   closeAddBookDlg();
@@ -4992,6 +5236,11 @@ window.addEventListener("keydown", (e) => {
     }
     if (filePropsDlgOpen()) {
       closeFileProps();
+      e.preventDefault();
+      return;
+    }
+    if (scanDlgOpen()) {
+      closeScanDlg();
       e.preventDefault();
       return;
     }

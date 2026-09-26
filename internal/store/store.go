@@ -283,7 +283,10 @@ type UI struct {
 	HideReadChapters     bool    `json:"hideReadChapters"`
 	WelcomeBackground    string  `json:"welcomeBackground,omitempty"`
 	GamificationDisabled bool    `json:"gamificationDisabled,omitempty"`
+	ImportWorkspace      string  `json:"importWorkspace,omitempty"`
 }
+
+const DefaultImportWorkspace = "Backlog"
 
 func Open() (*Store, error) {
 	dir, err := os.UserConfigDir()
@@ -886,6 +889,19 @@ func workspaceByID(workspaces []Workspace, id string) *Workspace {
 	return nil
 }
 
+func findWorkspaceByName(workspaces []Workspace, name string) *Workspace {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	for i := range workspaces {
+		if strings.EqualFold(strings.TrimSpace(workspaces[i].Name), name) {
+			return &workspaces[i]
+		}
+	}
+	return nil
+}
+
 func libraryEntry(ws *Workspace, key string) (Entry, bool) {
 	for _, e := range ws.Library {
 		if e.Key == key {
@@ -1195,6 +1211,7 @@ func defaultUI() UI {
 		WorkspacesOpen:  true,
 		ListsWidth:      280,
 		ListsOpen:       true,
+		ImportWorkspace: DefaultImportWorkspace,
 	}
 }
 
@@ -1268,7 +1285,16 @@ func normalizeUI(u UI) UI {
 		u.ListsWidth = d.ListsWidth
 	}
 	u.WelcomeBackground = normalizeWelcomeBackground(u.WelcomeBackground)
+	u.ImportWorkspace = normalizeImportWorkspace(u.ImportWorkspace)
 	return u
+}
+
+func normalizeImportWorkspace(name string) string {
+	name = clipRunes(name, 80)
+	if name == "" {
+		return DefaultImportWorkspace
+	}
+	return name
 }
 
 func (s *Store) UI() UI {
@@ -1644,12 +1670,87 @@ func (s *Store) SetBookMeta(key, description, journal string) error {
 	return os.ErrNotExist
 }
 
+func (s *Store) EnsureNamedWorkspace(name string) (WorkspaceInfo, error) {
+	name = normalizeImportWorkspace(name)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureWorkspace()
+	if ws := findWorkspaceByName(s.data.Workspaces, name); ws != nil {
+		return workspaceInfo(*ws, s.data.CurrentWorkspace), nil
+	}
+	ws := emptyWorkspace(workspaceID(), name)
+	s.data.Workspaces = append(s.data.Workspaces, ws)
+	if err := s.save(); err != nil {
+		s.data.Workspaces = s.data.Workspaces[:len(s.data.Workspaces)-1]
+		return WorkspaceInfo{}, err
+	}
+	return workspaceInfo(ws, s.data.CurrentWorkspace), nil
+}
+
+func (s *Store) WorkspaceByName(name string) (WorkspaceInfo, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureWorkspace()
+	name = normalizeImportWorkspace(name)
+	ws := findWorkspaceByName(s.data.Workspaces, name)
+	if ws == nil {
+		return WorkspaceInfo{Name: name}, false
+	}
+	return workspaceInfo(*ws, s.data.CurrentWorkspace), true
+}
+
+func (s *Store) HasBook(wsID, key, title string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ws := workspaceByID(s.data.Workspaces, strings.TrimSpace(wsID))
+	if ws == nil {
+		return false
+	}
+	bound := s.bindKeyLocked(ws, strings.TrimSpace(key), title)
+	old, ok := libraryEntry(ws, bound)
+	return ok && sameBookTitle(old.Title, title)
+}
+
+func (s *Store) AddToWorkspace(id string, entries []Entry) (added, skipped int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureWorkspace()
+	ws := workspaceByID(s.data.Workspaces, strings.TrimSpace(id))
+	if ws == nil {
+		return 0, 0, os.ErrNotExist
+	}
+	for _, e := range entries {
+		if strings.TrimSpace(e.Key) == "" {
+			skipped++
+			continue
+		}
+		if s.rememberLocked(ws, e, true) {
+			added++
+			continue
+		}
+		skipped++
+	}
+	if added == 0 {
+		return added, skipped, nil
+	}
+	return added, skipped, s.save()
+}
+
 func (s *Store) Remember(e Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ws := s.ws()
+	s.rememberLocked(s.ws(), e, false)
+	return s.save()
+}
+
+func (s *Store) rememberLocked(ws *Workspace, e Entry, skipExisting bool) bool {
 	original := strings.TrimSpace(e.Key)
 	e.Key = s.bindKeyLocked(ws, original, e.Title)
+	if skipExisting {
+		if old, ok := libraryEntry(ws, e.Key); ok && sameBookTitle(old.Title, e.Title) {
+			return false
+		}
+	}
 	if e.Key != original && original != "" {
 		if old, ok := libraryEntry(ws, original); ok && sameBookTitle(old.Title, e.Title) {
 			rekeyWorkspace(ws, original, e.Key)
@@ -1692,6 +1793,9 @@ func (s *Store) Remember(e Entry) error {
 		out = append(out, old)
 	}
 	ws.Library = out
+	if ws.Books == nil {
+		ws.Books = map[string]Progress{}
+	}
 	ws.Books[e.Key] = Progress{
 		Title:        e.Title,
 		Author:       e.Author,
@@ -1702,7 +1806,7 @@ func (s *Store) Remember(e Entry) error {
 		UpdatedAt:    e.UpdatedAt,
 	}
 	ws.UpdatedAt = e.UpdatedAt
-	return s.save()
+	return true
 }
 
 func (s *Store) sharedFiles(key, title, exceptID string) (path, cover string) {
